@@ -1,0 +1,34 @@
+{
+  "6936852095": [
+    {
+      "type": "edicao_padrao",
+      "message": "ReplicateError Details:\ntitle: Unauthenticated\nstatus: 401\ndetail: You did not pass a valid authentication token",
+      "context": "Edicao Padrao",
+      "timestamp": "2026-04-16T18:51:33.712452"
+    },
+    {
+      "type": "edicao_padrao",
+      "message": "ReplicateError Details:\ntitle: Unauthenticated\nstatus: 401\ndetail: You did not pass a valid authentication token",
+      "context": "Edicao Padrao",
+      "timestamp": "2026-04-16T18:47:06.641793"
+    },
+    {
+      "type": "edicao_padrao",
+      "message": "ReplicateError Details:\ntitle: Unauthenticated\nstatus: 401\ndetail: You did not pass a valid authentication token",
+      "context": "Edicao Padrao",
+      "timestamp": "2026-04-16T18:20:09.728616"
+    },
+    {
+      "type": "edicao_padrao",
+      "message": "ReplicateError Details:\ntitle: Unauthenticated\nstatus: 401\ndetail: You did not pass a valid authentication token",
+      "context": "Edicao Padrao",
+      "timestamp": "2026-04-16T18:18:00.950845"
+    },
+    {
+      "type": "edicao_pro",
+      "message": "ReplicateError Details:\ntitle: Unauthenticated\nstatus: 401\ndetail: You did not pass a valid authentication token",
+      "context": "Edicao Pro",
+      "timestamp": "2026-04-16T17:14:46.006136"
+    }
+  ]
+}

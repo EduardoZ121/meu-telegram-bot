@@ -1,0 +1,16 @@
+botenv/
+__pycache__/
+*.log
+.cache
+.config
+.bash_history
+.gitconfig
+.bashrc
+.profile
+.python_history
+.bash_logout
+.sudo_as_admin_successful
+.cache
+.config
+botenv/
+*.log
