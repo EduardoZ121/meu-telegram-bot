@@ -235,6 +235,12 @@ FAVORITES_FILE = "user_favorites.json"
 STATISTICS_FILE = "user_statistics.json"
 SHARED_CREATIONS_FILE = "shared_creations.json"
 
+# ==================== SISTEMA DE CONTROLO ADMIN (NOVOS) ====================
+USER_FLAGS_FILE = "user_flags.json"           # ban, shadowban, mute, tags, nsfw_allowed
+REPORTS_FILE = "reports.json"                 # reports de utilizadores
+SYSTEM_LOGS_FILE = "system_logs.json"         # eventos/erros internos
+SYSTEM_CONFIG_FILE = "system_config.json"     # flags globais (nsfw, maintenance, etc.)
+
 LANG_LOCK = Lock()
 CREDITS_LOCK = Lock()
 SETTINGS_LOCK = Lock()
@@ -246,6 +252,10 @@ ERRORS_LOCK = Lock()
 FAVORITES_LOCK = Lock()
 STATS_LOCK = Lock()
 SHARED_LOCK = Lock()
+FLAGS_LOCK = Lock()
+REPORTS_LOCK = Lock()
+SYSLOGS_LOCK = Lock()
+SYSCFG_LOCK = Lock()
 
 SUPPORTED_LANGUAGES = {"pt": "🇵🇹 Português", "en": "🇬🇧 English", "es": "🇪🇸 Español", "fr": "🇫🇷 Français"}
 
@@ -307,6 +317,275 @@ def save_json(filename, data, lock):
 
 # Agora que load_json existe, carregar admins secundarios
 load_secondary_admins()
+
+# ==================== SISTEMA GOD-MODE ADMIN (CONFIG GLOBAL) ====================
+DEFAULT_SYSTEM_CONFIG = {
+    "nsfw_enabled": False,          # False = bloqueia NSFW globalmente (default seguro)
+    "maintenance_mode": False,       # True = so admin usa o bot
+    "generation_disabled": False,    # True = desliga toda a geracao (emergencia)
+    "safe_mode": False,              # True = filtros + rate-limit mais restritos
+    "rate_limit_per_min": 10,        # max pedidos por minuto por user
+    "nsfw_keywords": [
+        "nude", "naked", "nsfw", "porn", "sex", "sexy", "erotic", "hentai",
+        "topless", "boobs", "breasts", "nipples", "penis", "vagina", "dick",
+        "pussy", "blowjob", "cum", "orgasm", "lingerie underwear", "xxx",
+        "nudez", "pelado", "pelada", "nu", "nua", "peito", "seios", "buceta",
+        "pinto", "piroca", "gozar", "gozo", "desnudo", "desnuda", "tetas"
+    ]
+}
+
+def get_system_config():
+    """Carrega config do sistema com defaults."""
+    cfg = load_json(SYSTEM_CONFIG_FILE)
+    if not cfg:
+        cfg = dict(DEFAULT_SYSTEM_CONFIG)
+        save_json(SYSTEM_CONFIG_FILE, cfg, SYSCFG_LOCK)
+        return cfg
+    # Mergeia defaults para novas keys
+    merged = dict(DEFAULT_SYSTEM_CONFIG)
+    merged.update(cfg)
+    return merged
+
+def set_system_config(key, value):
+    cfg = get_system_config()
+    cfg[key] = value
+    save_json(SYSTEM_CONFIG_FILE, cfg, SYSCFG_LOCK)
+    return cfg
+
+# ==================== FLAGS DE UTILIZADORES ====================
+def get_user_flags(user_id):
+    """Retorna flags do user (ban, shadowban, mute, tags, nsfw_allowed)."""
+    data = load_json(USER_FLAGS_FILE)
+    uid = str(user_id)
+    if uid not in data:
+        return {
+            "banned": False,
+            "shadowbanned": False,
+            "muted_until": 0,
+            "tags": [],
+            "nsfw_allowed": False,
+            "last_activity": 0,
+            "reports_count": 0
+        }
+    f = data[uid]
+    # Defaults para keys em falta
+    f.setdefault("banned", False)
+    f.setdefault("shadowbanned", False)
+    f.setdefault("muted_until", 0)
+    f.setdefault("tags", [])
+    f.setdefault("nsfw_allowed", False)
+    f.setdefault("last_activity", 0)
+    f.setdefault("reports_count", 0)
+    return f
+
+def set_user_flag(user_id, key, value):
+    data = load_json(USER_FLAGS_FILE)
+    uid = str(user_id)
+    if uid not in data:
+        data[uid] = {}
+    data[uid][key] = value
+    save_json(USER_FLAGS_FILE, data, FLAGS_LOCK)
+
+def add_user_tag(user_id, tag):
+    flags = get_user_flags(user_id)
+    tags = flags.get("tags", [])
+    if tag not in tags:
+        tags.append(tag)
+    set_user_flag(user_id, "tags", tags)
+
+def remove_user_tag(user_id, tag):
+    flags = get_user_flags(user_id)
+    tags = [t for t in flags.get("tags", []) if t != tag]
+    set_user_flag(user_id, "tags", tags)
+
+def has_tag(user_id, tag):
+    return tag in get_user_flags(user_id).get("tags", [])
+
+def is_vip(user_id):
+    return has_tag(user_id, "VIP")
+
+def touch_user_activity(user_id):
+    set_user_flag(user_id, "last_activity", int(time.time()))
+
+# ==================== RATE LIMITING (IN-MEMORY SLIDING WINDOW) ====================
+_rate_buckets = {}  # {user_id: [timestamps]}
+_rate_lock = Lock()
+
+def check_rate_limit(user_id):
+    """Retorna (allowed, remaining). Admin ignora."""
+    if is_any_admin(user_id):
+        return True, 999
+    cfg = get_system_config()
+    limit = int(cfg.get("rate_limit_per_min", 10))
+    if cfg.get("safe_mode"):
+        limit = max(3, limit // 2)
+    now = time.time()
+    cutoff = now - 60
+    with _rate_lock:
+        bucket = _rate_buckets.get(user_id, [])
+        bucket = [t for t in bucket if t > cutoff]
+        if len(bucket) >= limit:
+            _rate_buckets[user_id] = bucket
+            return False, 0
+        bucket.append(now)
+        _rate_buckets[user_id] = bucket
+        return True, limit - len(bucket)
+
+# ==================== NSFW FILTER ====================
+def check_nsfw_prompt(prompt):
+    """Retorna (is_nsfw, matched_keyword_or_None)."""
+    if not prompt:
+        return False, None
+    cfg = get_system_config()
+    keywords = cfg.get("nsfw_keywords", [])
+    p_lower = prompt.lower()
+    for kw in keywords:
+        kw_l = kw.strip().lower()
+        if not kw_l:
+            continue
+        # word-boundary match
+        if re.search(r'\b' + re.escape(kw_l) + r'\b', p_lower):
+            return True, kw_l
+    return False, None
+
+# ==================== LOGS DE SISTEMA ====================
+MAX_SYSTEM_LOGS = 500
+
+def log_system_event(level, category, message, user_id=None):
+    """Adiciona evento aos logs do sistema (rolling)."""
+    try:
+        data = load_json(SYSTEM_LOGS_FILE)
+        logs = data.get("logs", [])
+        logs.insert(0, {
+            "ts": int(time.time()),
+            "level": level,  # info, warn, error, payment, nsfw, ban
+            "category": category,
+            "message": str(message)[:500],
+            "user_id": user_id
+        })
+        logs = logs[:MAX_SYSTEM_LOGS]
+        data["logs"] = logs
+        save_json(SYSTEM_LOGS_FILE, data, SYSLOGS_LOCK)
+    except Exception as _e:
+        pass
+
+# ==================== REPORTS ====================
+def add_report(reporter_id, reported_user_id, reason):
+    data = load_json(REPORTS_FILE)
+    reports = data.get("reports", [])
+    report_id = f"r{int(time.time()*1000)}"
+    reports.insert(0, {
+        "id": report_id,
+        "reporter_id": reporter_id,
+        "reported_user_id": reported_user_id,
+        "reason": str(reason)[:500],
+        "ts": int(time.time()),
+        "status": "pending"  # pending, banned, ignored, safe
+    })
+    data["reports"] = reports[:1000]
+    save_json(REPORTS_FILE, data, REPORTS_LOCK)
+    # incrementa contador no user reportado
+    flags = get_user_flags(reported_user_id)
+    set_user_flag(reported_user_id, "reports_count", int(flags.get("reports_count", 0)) + 1)
+    return report_id
+
+def update_report_status(report_id, status):
+    data = load_json(REPORTS_FILE)
+    for r in data.get("reports", []):
+        if r.get("id") == report_id:
+            r["status"] = status
+            break
+    save_json(REPORTS_FILE, data, REPORTS_LOCK)
+
+def get_pending_reports(limit=20):
+    data = load_json(REPORTS_FILE)
+    return [r for r in data.get("reports", []) if r.get("status") == "pending"][:limit]
+
+# ==================== SAFETY GATE (CHAMADO EM TODA A GERACAO) ====================
+def check_user_allowed(user_id, prompt=None, check_rate=True):
+    """Verifica se o user pode gerar. ADMIN IGNORA TUDO.
+    Retorna (allowed: bool, reason: str, extra: dict).
+    reason pode ser:
+      - 'ok' (pode continuar)
+      - 'admin_bypass' (admin, ignora tudo)
+      - 'maintenance' | 'generation_off' | 'banned' | 'shadowban'
+      - 'rate_limit' | 'nsfw_blocked' (com extra.keyword)
+    extra: {'keyword': str} se nsfw, {'retry_in': int} se rate_limit
+    """
+    # Admin = GOD MODE
+    if is_any_admin(user_id):
+        touch_user_activity(user_id)
+        return True, "admin_bypass", {}
+
+    cfg = get_system_config()
+
+    if cfg.get("maintenance_mode"):
+        return False, "maintenance", {}
+
+    if cfg.get("generation_disabled"):
+        return False, "generation_off", {}
+
+    flags = get_user_flags(user_id)
+
+    if flags.get("banned"):
+        return False, "banned", {}
+
+    # Rate limit
+    if check_rate:
+        ok, remaining = check_rate_limit(user_id)
+        if not ok:
+            return False, "rate_limit", {"retry_in": 60}
+
+    # NSFW check
+    if prompt:
+        is_nsfw, kw = check_nsfw_prompt(prompt)
+        if is_nsfw:
+            if not cfg.get("nsfw_enabled") and not flags.get("nsfw_allowed"):
+                log_system_event("nsfw", "prompt_blocked", f"KW={kw} | {prompt[:120]}", user_id)
+                return False, "nsfw_blocked", {"keyword": kw}
+
+    # Shadowban: deixa passar mas sinaliza (caller decide ignorar/fake)
+    if flags.get("shadowbanned"):
+        touch_user_activity(user_id)
+        return True, "shadowban", {}
+
+    touch_user_activity(user_id)
+    return True, "ok", {}
+
+def deny_message(lang, reason, extra=None):
+    """Mensagem traduzida para bloquear o user."""
+    extra = extra or {}
+    msgs = {
+        "maintenance": {
+            "pt": "🛠️ O bot está em <b>modo manutenção</b>. Volta mais tarde.",
+            "en": "🛠️ Bot is in <b>maintenance mode</b>. Please try later.",
+            "es": "🛠️ El bot está en <b>modo mantenimiento</b>. Vuelve más tarde."
+        },
+        "generation_off": {
+            "pt": "⛔ Geração de imagens temporariamente desativada pelo admin.",
+            "en": "⛔ Image generation temporarily disabled by admin.",
+            "es": "⛔ Generación de imágenes desactivada por el admin."
+        },
+        "banned": {
+            "pt": "🚫 A tua conta foi <b>banida</b>. Contacta o suporte se achas que foi um erro.",
+            "en": "🚫 Your account has been <b>banned</b>. Contact support if you think this is a mistake.",
+            "es": "🚫 Tu cuenta fue <b>baneada</b>. Contacta al soporte si crees que es un error."
+        },
+        "rate_limit": {
+            "pt": "⏳ Muitos pedidos! Aguarda 1 minuto e tenta novamente.",
+            "en": "⏳ Too many requests! Wait 1 minute and try again.",
+            "es": "⏳ ¡Demasiados pedidos! Espera 1 minuto e intenta de nuevo."
+        },
+        "nsfw_blocked": {
+            "pt": f"🔞 Prompt bloqueado pelo filtro de conteúdo (palavra: <code>{extra.get('keyword','')}</code>).",
+            "en": f"🔞 Prompt blocked by content filter (word: <code>{extra.get('keyword','')}</code>).",
+            "es": f"🔞 Prompt bloqueado por el filtro (palabra: <code>{extra.get('keyword','')}</code>)."
+        }
+    }
+    m = msgs.get(reason, {"pt": "❌ Operação não permitida.", "en": "❌ Not allowed.", "es": "❌ No permitido."})
+    return m.get(lang, m["pt"])
+
+
 
 # ==================== SISTEMA DE ERROS ====================
 def save_user_error(user_id, error_type, error_msg, context=""):
@@ -684,6 +963,21 @@ MODELO_PRO = {
     "prompt_fixo": "make it more realistic"
 }
 
+PRO_PRESETS = {
+    "original": {
+        "nome": "📷 Original",
+        "prompt": "You are an AI that specializes in image editing descriptions that emphasize photorealism and focuses on edits to look like real life photographic images. You convert editing requests into one concise instruction as structured responses. You focus on adhering to photorealistic style and realistic details while ensuring the importance of keeping the composition and structure of the image same as reference. Ensure subjects are accurately represented and that their identity is maintained. You focus on photography with emphasis on details while ensuring the importance of keeping the structure of the image intact as well and not changing the positioning of subjects in image while managing to modify the style to look real. Reference actual image elements. Make abstractions concrete. Follow edit requests without hesitation. Keep pose. Keep angle. Keep colors. Keep composition. Keep viewing direction. Modify any subjects appearance to show real details while keeping colors the same. Make the it look like a professional photograph. Keep subject position and their pose the same as the reference. Ensure image looks real. Make sure anatomy is accurately represented. Normal anatomy. Keep body color. Keep subject position and their pose the same as the reference. Make sure the subject is in the same position. Keep pose. Keep lighting direction accurate for the scene. Keep shadows accurate for the scene. Keep in focus. The result should be a professional photograph."
+    },
+    "expression": {
+        "nome": "🎭 Expressao Fiel",
+        "prompt": "You are an AI that specializes in image editing descriptions for photorealistic results while strictly preserving the original subject and scene. Create concise edit instructions that make the image look like a real-life professional photograph without changing the identity or core appearance of the subject. Preserve exactly: facial expression, emotional tone and mood, apparent age, facial structure, identity, gaze direction, head angle, pose, body proportions, camera angle, framing, composition, subject position, hairstyle and hair length, skin tone, lighting direction, shadows, color relationships. Keep the same expression as the reference image. Do not invent a new expression. Do not change mouth shape, smile intensity, eyebrow position, eyelid tension, cheek tension, or eye openness unless explicitly requested. Keep the subject looking the same age as in the reference. Do not add age. Do not make the subject look older or younger. Avoid exaggerated pores, wrinkles, smile lines, crows feet, forehead lines, under-eye hollows, skin roughness, or other age-related detail unless clearly visible in the original and necessary to preserve likeness. Enhance realism through natural photographic detail, believable skin texture, accurate anatomy, and realistic lighting, but do not introduce extra facial detail that changes perceived age, mood, or identity. The output should look like a realistic photograph of the same person in the same moment, with the same expression, same age, and same overall appearance as the reference."
+    },
+    "softer": {
+        "nome": "✨ Realismo Suave",
+        "prompt": "You are an AI that converts edit requests into concise photorealistic image editing instructions. Make the image look like a real professional photograph while preserving the original subject exactly. Preserve identity, facial expression, emotional tone, apparent age, facial structure, gaze direction, head angle, pose, composition, framing, subject position, hairstyle, skin tone, lighting direction, shadows, and colors. Keep the exact same expression as the reference image. Do not invent a new expression. Do not change the mouth shape, smile, eyebrows, eyelids, cheeks, or eye openness unless explicitly requested. Keep the exact same apparent age. Do not make the subject older or younger. Avoid adding extra wrinkles, pores, skin roughness, smile lines, forehead lines, crows feet, or under-eye detail that changes age or likeness. Increase realism without changing the person, the moment, or the mood."
+    }
+}
+
 MODELO_ARTISTICO = {
     "nome": "🎭 Modelo Artistico",
     "desc": "Transforma fotos em diferentes estilos artisticos",
@@ -784,11 +1078,13 @@ def gerar_imagem_modelo(prompt, aspect_ratio="1:1", image_input=None, num_output
                 raise e
         raise e
 
-def gerar_imagem_pro(image_input):
-    """Melhora imagem usando Modelo Pro (FLUX.2 Klein 9B) - prompt fixo"""
+def gerar_imagem_pro(image_input, prompt_override=None):
+    """Melhora imagem usando Modelo Pro (FLUX.2 Klein 9B).
+    Se prompt_override for fornecido, usa-o em vez do prompt_fixo."""
     try:
+        prompt_final = prompt_override if prompt_override else MODELO_PRO["prompt_fixo"]
         input_params = {
-            "prompt": MODELO_PRO["prompt_fixo"],
+            "prompt": prompt_final,
             "images": [image_input],
             "aspect_ratio": "match_input_image",
             "safety_tolerance": 6,
@@ -805,6 +1101,70 @@ def gerar_imagem_pro(image_input):
             return [str(output)]
     except Exception as e:
         raise e
+
+def execute_pro_single(chat_id, user_id, lang, photo_data, prompt_override, preset_nome=None):
+    """Executa edicao Pro numa foto unica.
+    prompt_override: prompt final enviado ao FLUX.2 (custom do user ou de um preset).
+    preset_nome: nome legivel do preset (opcional, para mostrar no caption).
+    Debita creditos, processa e faz refund em caso de falha.
+    """
+    if not use_credit(user_id, MODELO_PRO["custo"]):
+        bot.send_message(chat_id, "❌ Créditos insuficientes!")
+        return
+
+    proc_texts = {
+        "pt": "✨ <b>Modelo Pro ativado!</b>\nAplicando melhoria fotorrealista avancada...\nIsto pode demorar um pouco.",
+        "en": "✨ <b>Pro Model activated!</b>\nApplying advanced photorealistic enhancement...\nThis may take a moment.",
+        "es": "✨ <b>Modelo Pro activado!</b>\nAplicando mejora fotorrealista avanzada...\nEsto puede tardar un poco."
+    }
+    proc_msg = bot.send_message(chat_id, proc_texts.get(lang, proc_texts["pt"]), parse_mode='HTML')
+
+    try:
+        file_info = bot.get_file(photo_data["file_id"])
+        downloaded_file = bot.download_file(file_info.file_path)
+        image_base64 = base64.b64encode(downloaded_file).decode('utf-8')
+        image_data_url = f"data:image/jpeg;base64,{image_base64}"
+
+        urls = gerar_imagem_pro(image_input=image_data_url, prompt_override=prompt_override)
+
+        try:
+            bot.delete_message(chat_id, proc_msg.message_id)
+        except:
+            pass
+
+        preset_line = f"\n🎯 Preset: {preset_nome}" if preset_nome else ""
+        for url in urls:
+            img_data = requests.get(url, timeout=60).content
+            creation_id = add_to_history(user_id, "edit", prompt_override, url)
+            creditos_restantes = get_user_credits(user_id)
+
+            caption_texts = {
+                "pt": f"✨ <b>Melhoria Pro aplicada!</b>\n🤖 Modelo: Pro (FLUX.2 Klein 9B){preset_line}\n💳 Créditos restantes: <code>{creditos_restantes}</code>",
+                "en": f"✨ <b>Pro enhancement applied!</b>\n🤖 Model: Pro (FLUX.2 Klein 9B){preset_line}\n💳 Credits remaining: <code>{creditos_restantes}</code>",
+                "es": f"✨ <b>Mejora Pro aplicada!</b>\n🤖 Modelo: Pro (FLUX.2 Klein 9B){preset_line}\n💳 Créditos restantes: <code>{creditos_restantes}</code>"
+            }
+            bot.send_photo(chat_id, img_data, caption=caption_texts.get(lang, caption_texts["pt"]),
+                           reply_markup=creation_actions_keyboard(creation_id, lang), parse_mode='HTML')
+
+        update_user_stats(user_id, "total_edits")
+        logger.info(f"Edicao Pro para user {user_id} (preset={preset_nome or 'custom'})")
+
+    except Exception as e:
+        add_credits(user_id, MODELO_PRO["custo"], "reembolso")
+        save_user_error(user_id, "edicao_pro", str(e), "Edicao Pro")
+        diagnose_and_notify(e, "edicao_pro")
+        error_texts = {
+            "pt": "❌ Erro ao processar com Modelo Pro. Créditos reembolsados.",
+            "en": "❌ Pro Model processing error. Credits refunded.",
+            "es": "❌ Error al procesar con Modelo Pro. Créditos reembolsados."
+        }
+        try:
+            bot.edit_message_text(error_texts.get(lang, error_texts["pt"]), chat_id, proc_msg.message_id)
+        except:
+            bot.send_message(chat_id, error_texts.get(lang, error_texts["pt"]))
+        logger.error(f"Erro Pro: {e}")
+
+
 
 # ==================== HISTÓRICO ====================
 def add_to_history(user_id, action_type, prompt, image_url, creation_id=None):
@@ -1399,8 +1759,9 @@ def execute_combine_padrao(user_id, lang, caption):
         photo_collections.pop(user_id, None)
 
 
-def execute_combine_pro(user_id, lang, caption):
-    """Executa combinacao com modelo Pro"""
+def execute_combine_pro(user_id, lang, caption, prompt_override=None):
+    """Executa combinacao com modelo Pro.
+    Se prompt_override for fornecido, substitui o prompt base (ex: preset de realismo)."""
     try:
         if user_id not in photo_collections:
             return
@@ -1430,7 +1791,9 @@ def execute_combine_pro(user_id, lang, caption):
             bot.send_message(user_id, "❌ Erro ao processar fotos. Créditos reembolsados.")
             return
         
-        if caption:
+        if prompt_override:
+            enhanced_prompt = prompt_override
+        elif caption:
             enhanced_prompt = improve_prompt_auto(f"Combine these {len(photo_data_urls)} characters/people: {caption}. All subjects together, cohesive scene, high quality")
         else:
             enhanced_prompt = f"Combine all {len(photo_data_urls)} characters together in one cohesive scene, natural composition, high quality, photorealistic"
@@ -1478,6 +1841,15 @@ def execute_combine_pro(user_id, lang, caption):
         photo_collections.pop(user_id, None)
 
 def processar_criacao(chat_id, user_id, prompt, lang, auto_improve=True):
+    # GATE DE SEGURANCA (admin ignora)
+    allowed, reason, extra = check_user_allowed(user_id, prompt=prompt, check_rate=True)
+    if not allowed:
+        bot.send_message(chat_id, deny_message(lang, reason, extra), parse_mode='HTML')
+        return
+    if reason == "shadowban":
+        log_system_event("info", "shadowban_drop", f"Criacao dropada user {user_id}", user_id)
+        return
+
     style_settings = get_user_style_settings(user_id)
     num_variations = style_settings.get("num_variations", 1)
     visual_style = style_settings.get("visual_style", "livre")
@@ -1993,35 +2365,32 @@ def callback_buy(call):
 admin_states = {}
 
 def admin_panel_keyboard(user_id=None):
-    """Teclado do painel administrativo - diferente para super admin e secundario"""
+    """Teclado do painel administrativo - organizado por seccoes"""
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     is_super = is_super_admin(user_id) if user_id else True
-    
+
     if is_super:
-        # Super admin - acesso total
+        # Super admin - acesso total, organizado por seccoes
         markup.add(
-            telebot.types.InlineKeyboardButton("💳 Dar Créditos", callback_data="admin_give_credits"),
-            telebot.types.InlineKeyboardButton("📊 Estatísticas", callback_data="admin_stats")
+            telebot.types.InlineKeyboardButton("👥 Utilizadores", callback_data="admin_sec_users"),
+            telebot.types.InlineKeyboardButton("💰 Finanças", callback_data="admin_sec_finance")
         )
         markup.add(
-            telebot.types.InlineKeyboardButton("👥 Listar Usuários", callback_data="admin_list_users"),
+            telebot.types.InlineKeyboardButton("🛡️ Segurança", callback_data="admin_sec_security"),
+            telebot.types.InlineKeyboardButton("📊 Analytics", callback_data="admin_sec_analytics")
+        )
+        markup.add(
+            telebot.types.InlineKeyboardButton("🚨 Reports", callback_data="admin_sec_reports"),
+            telebot.types.InlineKeyboardButton("🧾 Logs", callback_data="admin_sec_logs")
+        )
+        markup.add(
+            telebot.types.InlineKeyboardButton("⚙️ Sistema", callback_data="admin_sec_system"),
             telebot.types.InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")
         )
-        global bot_paused
-        pause_text = "▶️ Despausar Bot" if bot_paused else "⏸️ Pausar Bot"
         markup.add(
-            telebot.types.InlineKeyboardButton(pause_text, callback_data="admin_toggle_pause"),
-            telebot.types.InlineKeyboardButton("🌐 Ngrok URL", callback_data="admin_ngrok")
-        )
-        markup.add(
-            telebot.types.InlineKeyboardButton("📈 Status Bot", callback_data="admin_bot_status"),
-            telebot.types.InlineKeyboardButton("🛒 Aprovar Compras", callback_data="admin_pending")
-        )
-        markup.add(
-            telebot.types.InlineKeyboardButton("💰 Financeiro", callback_data="admin_finance"),
+            telebot.types.InlineKeyboardButton("🛒 Aprovar Compras", callback_data="admin_pending"),
             telebot.types.InlineKeyboardButton("👑 Gerir Admins", callback_data="admin_manage_admins")
         )
-        markup.add(telebot.types.InlineKeyboardButton("⚙️ Config Avançadas", callback_data="admin_advanced"))
     else:
         # Admin secundario - acesso limitado
         markup.add(
@@ -2032,7 +2401,7 @@ def admin_panel_keyboard(user_id=None):
             telebot.types.InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"),
             telebot.types.InlineKeyboardButton("💰 Financeiro", callback_data="admin_finance")
         )
-    
+
     markup.add(telebot.types.InlineKeyboardButton("❌ Fechar", callback_data="admin_close"))
     return markup
 
@@ -2098,6 +2467,164 @@ def credit_amounts_keyboard(user_id):
     markup.add(telebot.types.InlineKeyboardButton("✏️ Quantidade personalizada", callback_data=f"admin_custom_{user_id}"))
     markup.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_give_credits"))
     return markup
+
+# ==================== KEYBOARDS DE SECCOES DO PAINEL (NOVOS) ====================
+def admin_section_users_kb():
+    m = telebot.types.InlineKeyboardMarkup(row_width=2)
+    m.add(
+        telebot.types.InlineKeyboardButton("🔍 Procurar User", callback_data="admin_user_search"),
+        telebot.types.InlineKeyboardButton("📋 Listar Users", callback_data="admin_list_users")
+    )
+    m.add(
+        telebot.types.InlineKeyboardButton("💳 Dar Créditos", callback_data="admin_give_credits"),
+        telebot.types.InlineKeyboardButton("💎 Lista VIPs", callback_data="admin_list_vips")
+    )
+    m.add(
+        telebot.types.InlineKeyboardButton("🚫 Lista Banidos", callback_data="admin_list_banned"),
+        telebot.types.InlineKeyboardButton("👻 Shadowbans", callback_data="admin_list_shadow")
+    )
+    m.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_panel"))
+    return m
+
+def admin_section_security_kb():
+    cfg = get_system_config()
+    m = telebot.types.InlineKeyboardMarkup(row_width=1)
+    nsfw_txt = "🔞 NSFW: ✅ ON (permitido)" if cfg.get("nsfw_enabled") else "🔞 NSFW: ❌ OFF (bloqueado)"
+    safe_txt = "🛡️ Safe Mode: ✅ ON" if cfg.get("safe_mode") else "🛡️ Safe Mode: ❌ OFF"
+    gen_txt = "⛔ Geração: DESLIGADA" if cfg.get("generation_disabled") else "✅ Geração: LIGADA"
+    maint_txt = "🛠️ Manutenção: ON" if cfg.get("maintenance_mode") else "🛠️ Manutenção: OFF"
+    m.add(telebot.types.InlineKeyboardButton(nsfw_txt, callback_data="admin_toggle_nsfw"))
+    m.add(telebot.types.InlineKeyboardButton(safe_txt, callback_data="admin_toggle_safe"))
+    m.add(telebot.types.InlineKeyboardButton(gen_txt, callback_data="admin_toggle_gen"))
+    m.add(telebot.types.InlineKeyboardButton(maint_txt, callback_data="admin_toggle_maint"))
+    m.add(telebot.types.InlineKeyboardButton("🔑 Editar NSFW keywords", callback_data="admin_nsfw_kw"))
+    m.add(telebot.types.InlineKeyboardButton(f"⚡ Rate-limit: {cfg.get('rate_limit_per_min',10)}/min", callback_data="admin_ratelimit"))
+    m.add(telebot.types.InlineKeyboardButton("🚨 EMERGÊNCIA - Desligar tudo", callback_data="admin_emergency_confirm"))
+    m.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_panel"))
+    return m
+
+def admin_section_system_kb():
+    m = telebot.types.InlineKeyboardMarkup(row_width=2)
+    m.add(
+        telebot.types.InlineKeyboardButton("📈 Status Bot", callback_data="admin_bot_status"),
+        telebot.types.InlineKeyboardButton("🔄 Soft Restart", callback_data="admin_soft_restart")
+    )
+    m.add(
+        telebot.types.InlineKeyboardButton("🧹 Clear Cache", callback_data="admin_clear_cache"),
+        telebot.types.InlineKeyboardButton("📥 Reload Config", callback_data="admin_reload_cfg")
+    )
+    m.add(
+        telebot.types.InlineKeyboardButton("🎯 Broadcast Segmentado", callback_data="admin_broadcast_seg"),
+        telebot.types.InlineKeyboardButton("🌐 Ngrok URL", callback_data="admin_ngrok")
+    )
+    m.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_panel"))
+    return m
+
+def admin_section_analytics_kb():
+    m = telebot.types.InlineKeyboardMarkup(row_width=1)
+    m.add(telebot.types.InlineKeyboardButton("📊 Estatísticas Gerais", callback_data="admin_stats"))
+    m.add(telebot.types.InlineKeyboardButton("🔥 Uso diário/semanal", callback_data="admin_usage_period"))
+    m.add(telebot.types.InlineKeyboardButton("💎 Top Spenders", callback_data="admin_top_spenders"))
+    m.add(telebot.types.InlineKeyboardButton("🔁 Retenção (7d)", callback_data="admin_retention"))
+    m.add(telebot.types.InlineKeyboardButton("🤖 Features mais usadas", callback_data="admin_top_features"))
+    m.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_panel"))
+    return m
+
+def admin_section_logs_kb(page=0):
+    logs = load_json(SYSTEM_LOGS_FILE).get("logs", [])
+    per_page = 10
+    total = len(logs)
+    start = page * per_page
+    end = min(start + per_page, total)
+    m = telebot.types.InlineKeyboardMarkup(row_width=2)
+    nav = []
+    if page > 0:
+        nav.append(telebot.types.InlineKeyboardButton("◀️ Anterior", callback_data=f"admin_logs_page_{page-1}"))
+    if end < total:
+        nav.append(telebot.types.InlineKeyboardButton("Próxima ▶️", callback_data=f"admin_logs_page_{page+1}"))
+    if nav:
+        m.row(*nav)
+    m.add(
+        telebot.types.InlineKeyboardButton("🧹 Limpar logs", callback_data="admin_logs_clear"),
+        telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_panel")
+    )
+    return m
+
+def admin_section_reports_kb():
+    m = telebot.types.InlineKeyboardMarkup(row_width=1)
+    reports = get_pending_reports(limit=20)
+    if not reports:
+        m.add(telebot.types.InlineKeyboardButton("(Sem reports pendentes)", callback_data="admin_noop"))
+    else:
+        for r in reports[:10]:
+            label = f"🚨 {r['reported_user_id']} — {r['reason'][:40]}"
+            m.add(telebot.types.InlineKeyboardButton(label, callback_data=f"admin_report_view_{r['id']}"))
+    m.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_panel"))
+    return m
+
+def user_profile_kb(target_id):
+    flags = get_user_flags(target_id)
+    m = telebot.types.InlineKeyboardMarkup(row_width=2)
+    ban_txt = "✅ Desbanir" if flags.get("banned") else "🚫 Banir"
+    shadow_txt = "✅ Tirar Shadowban" if flags.get("shadowbanned") else "👻 Shadowban"
+    nsfw_txt = "🔞 NSFW: ON" if flags.get("nsfw_allowed") else "🔞 NSFW: OFF"
+    vip_txt = "💎 Remover VIP" if has_tag(target_id, "VIP") else "💎 Tornar VIP"
+    m.add(
+        telebot.types.InlineKeyboardButton(ban_txt, callback_data=f"admin_u_ban_{target_id}"),
+        telebot.types.InlineKeyboardButton(shadow_txt, callback_data=f"admin_u_shadow_{target_id}")
+    )
+    m.add(
+        telebot.types.InlineKeyboardButton(vip_txt, callback_data=f"admin_u_vip_{target_id}"),
+        telebot.types.InlineKeyboardButton(nsfw_txt, callback_data=f"admin_u_nsfw_{target_id}")
+    )
+    m.add(
+        telebot.types.InlineKeyboardButton("💳 +Créditos", callback_data=f"admin_select_user_{target_id}"),
+        telebot.types.InlineKeyboardButton("➖ -Créditos", callback_data=f"admin_u_rm_{target_id}")
+    )
+    m.add(
+        telebot.types.InlineKeyboardButton("🏷️ Tag Spammer", callback_data=f"admin_u_tag_{target_id}_spammer"),
+        telebot.types.InlineKeyboardButton("🏷️ Tag Suspeito", callback_data=f"admin_u_tag_{target_id}_suspicious")
+    )
+    m.add(telebot.types.InlineKeyboardButton("🧹 Reset Data", callback_data=f"admin_u_reset_{target_id}"))
+    m.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_sec_users"))
+    return m
+
+def render_user_profile(target_id):
+    """Devolve texto HTML com perfil completo do user."""
+    credits_data = load_json(CREDITS_FILE)
+    user_credits = credits_data.get(str(target_id), {}).get("creditos", 0)
+    flags = get_user_flags(target_id)
+    stats = load_json(STATISTICS_FILE).get(str(target_id), {})
+    tags = flags.get("tags", [])
+    tags_str = ", ".join(tags) if tags else "—"
+    last_act = flags.get("last_activity", 0)
+    last_str = datetime.fromtimestamp(last_act).strftime("%Y-%m-%d %H:%M") if last_act else "nunca"
+    try:
+        info = bot.get_chat(int(target_id))
+        uname = f"@{info.username}" if getattr(info, "username", None) else info.first_name
+    except:
+        uname = "—"
+
+    status_icons = []
+    if flags.get("banned"): status_icons.append("🚫BANIDO")
+    if flags.get("shadowbanned"): status_icons.append("👻SHADOW")
+    if flags.get("nsfw_allowed"): status_icons.append("🔞NSFW-OK")
+    if has_tag(target_id, "VIP"): status_icons.append("💎VIP")
+    status_str = " | ".join(status_icons) if status_icons else "✅ OK"
+
+    msg = (
+        f"👤 <b>Perfil — {uname}</b>\n"
+        f"🆔 <code>{target_id}</code>\n"
+        f"💳 Créditos: <b>{user_credits}</b>\n"
+        f"📊 Total edits: {stats.get('total_edits',0)} | criações: {stats.get('total_creations',0)}\n"
+        f"🏷️ Tags: {tags_str}\n"
+        f"🚨 Reports recebidos: {flags.get('reports_count',0)}\n"
+        f"⏰ Última atividade: {last_str}\n"
+        f"📌 Status: {status_str}"
+    )
+    return msg
+
+
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('admin_'))
 def callback_admin_panel(call):
@@ -2534,6 +3061,463 @@ def callback_admin_panel(call):
         bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, 
                             reply_markup=markup, parse_mode='HTML')
 
+    # ==================== NOVOS HANDLERS — SECCOES ====================
+    elif action == "sec_users":
+        msg = "👥 <b>UTILIZADORES</b>\n\nEscolhe uma ação:"
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id,
+                              reply_markup=admin_section_users_kb(), parse_mode='HTML')
+
+    elif action == "sec_security":
+        cfg = get_system_config()
+        msg = "🛡️ <b>SEGURANÇA</b>\n\n"
+        msg += f"🔞 NSFW: <b>{'LIGADO' if cfg.get('nsfw_enabled') else 'BLOQUEADO'}</b>\n"
+        msg += f"🛡️ Safe Mode: <b>{'ON' if cfg.get('safe_mode') else 'OFF'}</b>\n"
+        msg += f"⛔ Geração: <b>{'DESLIGADA' if cfg.get('generation_disabled') else 'LIGADA'}</b>\n"
+        msg += f"🛠️ Manutenção: <b>{'ON' if cfg.get('maintenance_mode') else 'OFF'}</b>\n"
+        msg += f"⚡ Rate limit: <b>{cfg.get('rate_limit_per_min',10)}/min</b>\n"
+        msg += f"🔑 NSFW keywords: <b>{len(cfg.get('nsfw_keywords',[]))}</b>\n\n"
+        msg += "<i>Admin IGNORA todas as restrições.</i>"
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id,
+                              reply_markup=admin_section_security_kb(), parse_mode='HTML')
+
+    elif action == "sec_system":
+        msg = "⚙️ <b>SISTEMA</b>\n\nControle avançado:"
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id,
+                              reply_markup=admin_section_system_kb(), parse_mode='HTML')
+
+    elif action == "sec_analytics":
+        msg = "📊 <b>ANALYTICS</b>\n\nEscolhe uma métrica:"
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id,
+                              reply_markup=admin_section_analytics_kb(), parse_mode='HTML')
+
+    elif action == "sec_logs":
+        logs = load_json(SYSTEM_LOGS_FILE).get("logs", [])
+        page = 0
+        per_page = 10
+        page_logs = logs[page*per_page:(page+1)*per_page]
+        if not page_logs:
+            body = "<i>(Sem logs ainda)</i>"
+        else:
+            lines = []
+            for l in page_logs:
+                ts = datetime.fromtimestamp(l.get("ts", 0)).strftime("%m-%d %H:%M")
+                uid_s = f" u={l['user_id']}" if l.get("user_id") else ""
+                lines.append(f"[{ts}] {l.get('level','?').upper()} {l.get('category','?')}{uid_s}: {l.get('message','')[:120]}")
+            body = "\n".join(lines)
+        msg = f"🧾 <b>LOGS DO SISTEMA</b> (últimos {len(page_logs)}/{len(logs)})\n\n<pre>{body}</pre>"
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id,
+                              reply_markup=admin_section_logs_kb(page), parse_mode='HTML')
+
+    elif action.startswith("logs_page_"):
+        page = int(action.replace("logs_page_", ""))
+        logs = load_json(SYSTEM_LOGS_FILE).get("logs", [])
+        per_page = 10
+        page_logs = logs[page*per_page:(page+1)*per_page]
+        if not page_logs:
+            body = "<i>(sem mais logs)</i>"
+        else:
+            lines = []
+            for l in page_logs:
+                ts = datetime.fromtimestamp(l.get("ts", 0)).strftime("%m-%d %H:%M")
+                uid_s = f" u={l['user_id']}" if l.get("user_id") else ""
+                lines.append(f"[{ts}] {l.get('level','?').upper()} {l.get('category','?')}{uid_s}: {l.get('message','')[:120]}")
+            body = "\n".join(lines)
+        msg = f"🧾 <b>LOGS</b> (pag {page+1})\n\n<pre>{body}</pre>"
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id,
+                              reply_markup=admin_section_logs_kb(page), parse_mode='HTML')
+
+    elif action == "logs_clear":
+        save_json(SYSTEM_LOGS_FILE, {"logs": []}, SYSLOGS_LOCK)
+        bot.answer_callback_query(call.id, "Logs limpos!")
+        bot.edit_message_text("🧹 Logs limpos.\n\n<i>(Sem logs ainda)</i>", call.message.chat.id, call.message.message_id,
+                              reply_markup=admin_section_logs_kb(0), parse_mode='HTML')
+
+    elif action == "sec_reports":
+        pending = get_pending_reports(20)
+        msg = f"🚨 <b>REPORTS PENDENTES ({len(pending)})</b>\n\nClica para ver detalhes:"
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id,
+                              reply_markup=admin_section_reports_kb(), parse_mode='HTML')
+
+    elif action.startswith("report_view_"):
+        rid = action.replace("report_view_", "")
+        data = load_json(REPORTS_FILE)
+        r = next((x for x in data.get("reports", []) if x.get("id") == rid), None)
+        if not r:
+            bot.answer_callback_query(call.id, "Report não encontrado.")
+            return
+        ts = datetime.fromtimestamp(r.get("ts", 0)).strftime("%Y-%m-%d %H:%M")
+        msg = (f"🚨 <b>Report {rid}</b>\n\n"
+               f"Reporter: <code>{r['reporter_id']}</code>\n"
+               f"Reportado: <code>{r['reported_user_id']}</code>\n"
+               f"Razão: {r['reason']}\n"
+               f"Data: {ts}\n"
+               f"Status: {r['status']}")
+        mk = telebot.types.InlineKeyboardMarkup(row_width=2)
+        mk.add(
+            telebot.types.InlineKeyboardButton("🚫 Banir", callback_data=f"admin_r_ban_{rid}"),
+            telebot.types.InlineKeyboardButton("👻 Shadow", callback_data=f"admin_r_shadow_{rid}")
+        )
+        mk.add(
+            telebot.types.InlineKeyboardButton("✅ Marcar safe", callback_data=f"admin_r_safe_{rid}"),
+            telebot.types.InlineKeyboardButton("🙈 Ignorar", callback_data=f"admin_r_ignore_{rid}")
+        )
+        mk.add(telebot.types.InlineKeyboardButton("👤 Ver perfil", callback_data=f"admin_u_view_{r['reported_user_id']}"))
+        mk.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_sec_reports"))
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=mk, parse_mode='HTML')
+
+    elif action.startswith("r_"):
+        # Ações sobre reports: r_ban_<id>, r_shadow_<id>, r_safe_<id>, r_ignore_<id>
+        parts = action.split("_")
+        sub = parts[1]
+        rid = "_".join(parts[2:])
+        data = load_json(REPORTS_FILE)
+        r = next((x for x in data.get("reports", []) if x.get("id") == rid), None)
+        if not r:
+            bot.answer_callback_query(call.id, "Report não encontrado.")
+            return
+        target = int(r["reported_user_id"])
+        if sub == "ban":
+            set_user_flag(target, "banned", True)
+            update_report_status(rid, "banned")
+            log_system_event("ban", "report_action", f"User {target} banned via report {rid}", target)
+            bot.answer_callback_query(call.id, f"✅ User {target} banido.")
+        elif sub == "shadow":
+            set_user_flag(target, "shadowbanned", True)
+            update_report_status(rid, "banned")
+            log_system_event("ban", "report_action", f"User {target} shadowbanned via report {rid}", target)
+            bot.answer_callback_query(call.id, f"✅ User {target} shadowbanned.")
+        elif sub == "safe":
+            update_report_status(rid, "safe")
+            bot.answer_callback_query(call.id, "Marcado como safe.")
+        elif sub == "ignore":
+            update_report_status(rid, "ignored")
+            bot.answer_callback_query(call.id, "Ignorado.")
+        bot.edit_message_text("✅ Ação aplicada.", call.message.chat.id, call.message.message_id,
+                              reply_markup=admin_section_reports_kb(), parse_mode='HTML')
+
+    # ==================== TOGGLES DE SEGURANCA ====================
+    elif action in ("toggle_nsfw", "toggle_safe", "toggle_gen", "toggle_maint"):
+        cfg = get_system_config()
+        key_map = {
+            "toggle_nsfw": ("nsfw_enabled", "NSFW"),
+            "toggle_safe": ("safe_mode", "Safe Mode"),
+            "toggle_gen": ("generation_disabled", "Geração"),
+            "toggle_maint": ("maintenance_mode", "Manutenção"),
+        }
+        cfg_key, label = key_map[action]
+        new_val = not cfg.get(cfg_key, False)
+        set_system_config(cfg_key, new_val)
+        log_system_event("info" if cfg_key != "generation_disabled" else "warn",
+                         "cfg_change", f"{cfg_key}={new_val}", user_id)
+        # Mostrar bar invertida para generation_disabled (desligada = ruim)
+        state_str = "ON" if new_val else "OFF"
+        if cfg_key == "generation_disabled":
+            state_str = "DESLIGADA" if new_val else "LIGADA"
+        bot.answer_callback_query(call.id, f"{label}: {state_str}")
+        # Re-renderiza seccao
+        cfg = get_system_config()
+        msg = "🛡️ <b>SEGURANÇA</b>\n\n"
+        msg += f"🔞 NSFW: <b>{'LIGADO' if cfg.get('nsfw_enabled') else 'BLOQUEADO'}</b>\n"
+        msg += f"🛡️ Safe Mode: <b>{'ON' if cfg.get('safe_mode') else 'OFF'}</b>\n"
+        msg += f"⛔ Geração: <b>{'DESLIGADA' if cfg.get('generation_disabled') else 'LIGADA'}</b>\n"
+        msg += f"🛠️ Manutenção: <b>{'ON' if cfg.get('maintenance_mode') else 'OFF'}</b>\n"
+        msg += f"⚡ Rate limit: <b>{cfg.get('rate_limit_per_min',10)}/min</b>\n"
+        msg += f"🔑 NSFW keywords: <b>{len(cfg.get('nsfw_keywords',[]))}</b>\n\n"
+        msg += "<i>Admin IGNORA todas as restrições.</i>"
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id,
+                              reply_markup=admin_section_security_kb(), parse_mode='HTML')
+
+    elif action == "emergency_confirm":
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("🚨 SIM, desligar TUDO", callback_data="admin_emergency_go"))
+        mk.add(telebot.types.InlineKeyboardButton("❌ Não, cancelar", callback_data="admin_sec_security"))
+        bot.edit_message_text(
+            "🚨 <b>CONFIRMAÇÃO EMERGÊNCIA</b>\n\nVai:\n• Desligar geração globalmente\n• Ligar modo manutenção\n• Ligar safe mode\n\n<i>Admin continua a ter acesso total.</i>",
+            call.message.chat.id, call.message.message_id, reply_markup=mk, parse_mode='HTML')
+
+    elif action == "emergency_go":
+        set_system_config("generation_disabled", True)
+        set_system_config("maintenance_mode", True)
+        set_system_config("safe_mode", True)
+        log_system_event("error", "emergency", "EMERGENCY activated — all generation disabled", user_id)
+        bot.answer_callback_query(call.id, "🚨 Emergência ativada!")
+        bot.edit_message_text("🚨 <b>MODO EMERGÊNCIA ATIVADO</b>\n\n✅ Geração desligada\n✅ Manutenção on\n✅ Safe mode on",
+                              call.message.chat.id, call.message.message_id,
+                              reply_markup=admin_section_security_kb(), parse_mode='HTML')
+
+    elif action == "nsfw_kw":
+        cfg = get_system_config()
+        kws = cfg.get("nsfw_keywords", [])
+        msg = f"🔑 <b>NSFW keywords ({len(kws)})</b>\n\n"
+        msg += ", ".join(kws[:60])
+        msg += "\n\n<i>Envia a nova lista (palavras separadas por vírgula) para substituir. Ou /cancel.</i>"
+        admin_states[user_id] = "awaiting_nsfw_kw"
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_sec_security"))
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=mk, parse_mode='HTML')
+
+    elif action == "ratelimit":
+        admin_states[user_id] = "awaiting_ratelimit"
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_sec_security"))
+        bot.edit_message_text("⚡ <b>Rate Limit</b>\n\nEnvia o novo valor (pedidos/min, ex: 10):",
+                              call.message.chat.id, call.message.message_id, reply_markup=mk, parse_mode='HTML')
+
+    # ==================== SYSTEM ACTIONS ====================
+    elif action == "soft_restart":
+        global _rate_buckets
+        _rate_buckets = {}
+        user_states.clear()
+        log_system_event("info", "system", "Soft restart — caches limpos", user_id)
+        bot.answer_callback_query(call.id, "🔄 Restart suave feito!", show_alert=True)
+        bot.edit_message_text("⚙️ <b>SISTEMA</b>\n\nControle avançado:\n\n✅ Restart suave aplicado.",
+                              call.message.chat.id, call.message.message_id,
+                              reply_markup=admin_section_system_kb(), parse_mode='HTML')
+
+    elif action == "clear_cache":
+        pending_photos.clear()
+        photo_collections.clear()
+        _rate_buckets.clear()
+        log_system_event("info", "system", "Cache limpo", user_id)
+        bot.answer_callback_query(call.id, "🧹 Cache limpo.", show_alert=True)
+
+    elif action == "reload_cfg":
+        load_secondary_admins()
+        get_system_config()
+        log_system_event("info", "system", "Configs recarregadas", user_id)
+        bot.answer_callback_query(call.id, "📥 Configs recarregadas.", show_alert=True)
+
+    elif action == "broadcast_seg":
+        mk = telebot.types.InlineKeyboardMarkup(row_width=1)
+        mk.add(telebot.types.InlineKeyboardButton("📢 Todos (bd completa)", callback_data="admin_bseg_all"))
+        mk.add(telebot.types.InlineKeyboardButton("🔥 Ativos (últimos 7d)", callback_data="admin_bseg_active"))
+        mk.add(telebot.types.InlineKeyboardButton("💎 Só VIPs", callback_data="admin_bseg_vip"))
+        mk.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_sec_system"))
+        bot.edit_message_text("🎯 <b>Broadcast Segmentado</b>\n\nEscolhe o público:",
+                              call.message.chat.id, call.message.message_id, reply_markup=mk, parse_mode='HTML')
+
+    elif action.startswith("bseg_"):
+        segment = action.replace("bseg_", "")  # all, active, vip
+        admin_states[user_id] = f"awaiting_broadcast_{segment}"
+        bot.edit_message_text(f"📢 <b>Broadcast → {segment.upper()}</b>\n\nEscreve a mensagem:",
+                              call.message.chat.id, call.message.message_id, parse_mode='HTML')
+
+    # ==================== USER MANAGEMENT ====================
+    elif action == "user_search":
+        admin_states[user_id] = "awaiting_user_search"
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_sec_users"))
+        bot.edit_message_text("🔍 <b>Procurar User</b>\n\nEnvia o ID ou @username:",
+                              call.message.chat.id, call.message.message_id, reply_markup=mk, parse_mode='HTML')
+
+    elif action.startswith("u_view_"):
+        target = int(action.replace("u_view_", ""))
+        try:
+            bot.edit_message_text(render_user_profile(target), call.message.chat.id, call.message.message_id,
+                                  reply_markup=user_profile_kb(target), parse_mode='HTML')
+        except Exception as e:
+            bot.send_message(call.message.chat.id, f"Erro: {e}")
+
+    elif action.startswith("u_ban_"):
+        target = int(action.replace("u_ban_", ""))
+        flags = get_user_flags(target)
+        new_val = not flags.get("banned", False)
+        set_user_flag(target, "banned", new_val)
+        log_system_event("ban", "user_action", f"User {target} banned={new_val}", target)
+        bot.answer_callback_query(call.id, f"{'🚫 Banido' if new_val else '✅ Desbanido'}")
+        bot.edit_message_text(render_user_profile(target), call.message.chat.id, call.message.message_id,
+                              reply_markup=user_profile_kb(target), parse_mode='HTML')
+
+    elif action.startswith("u_shadow_"):
+        target = int(action.replace("u_shadow_", ""))
+        flags = get_user_flags(target)
+        new_val = not flags.get("shadowbanned", False)
+        set_user_flag(target, "shadowbanned", new_val)
+        log_system_event("ban", "user_action", f"User {target} shadow={new_val}", target)
+        bot.answer_callback_query(call.id, f"{'👻 Shadow on' if new_val else '✅ Shadow off'}")
+        bot.edit_message_text(render_user_profile(target), call.message.chat.id, call.message.message_id,
+                              reply_markup=user_profile_kb(target), parse_mode='HTML')
+
+    elif action.startswith("u_vip_"):
+        target = int(action.replace("u_vip_", ""))
+        if has_tag(target, "VIP"):
+            remove_user_tag(target, "VIP")
+            bot.answer_callback_query(call.id, "VIP removido.")
+        else:
+            add_user_tag(target, "VIP")
+            # VIPs ganham +10 créditos grátis como bónus
+            add_credits(target, 10, "vip_bonus")
+            try:
+                bot.send_message(target, "💎 <b>Foste promovido a VIP!</b>\n\n+10 créditos de bónus. Obrigado por apoiares o Remake_Pixel!", parse_mode='HTML')
+            except:
+                pass
+            bot.answer_callback_query(call.id, "💎 Agora é VIP (+10 créd).")
+        bot.edit_message_text(render_user_profile(target), call.message.chat.id, call.message.message_id,
+                              reply_markup=user_profile_kb(target), parse_mode='HTML')
+
+    elif action.startswith("u_nsfw_"):
+        target = int(action.replace("u_nsfw_", ""))
+        flags = get_user_flags(target)
+        new_val = not flags.get("nsfw_allowed", False)
+        set_user_flag(target, "nsfw_allowed", new_val)
+        log_system_event("info", "user_action", f"User {target} nsfw_allowed={new_val}", target)
+        bot.answer_callback_query(call.id, f"NSFW {'ON' if new_val else 'OFF'}")
+        bot.edit_message_text(render_user_profile(target), call.message.chat.id, call.message.message_id,
+                              reply_markup=user_profile_kb(target), parse_mode='HTML')
+
+    elif action.startswith("u_rm_"):
+        target = int(action.replace("u_rm_", ""))
+        admin_states[user_id] = f"awaiting_rm_credits_{target}"
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data=f"admin_u_view_{target}"))
+        bot.edit_message_text(f"➖ <b>Remover créditos</b>\n\nUser: <code>{target}</code>\n\nQuantos remover? (envia número)",
+                              call.message.chat.id, call.message.message_id, reply_markup=mk, parse_mode='HTML')
+
+    elif action.startswith("u_tag_"):
+        # admin_u_tag_<uid>_<tag>
+        rest = action.replace("u_tag_", "")
+        parts = rest.rsplit("_", 1)
+        target = int(parts[0])
+        tag = parts[1]
+        if has_tag(target, tag):
+            remove_user_tag(target, tag)
+            bot.answer_callback_query(call.id, f"Tag '{tag}' removida.")
+        else:
+            add_user_tag(target, tag)
+            bot.answer_callback_query(call.id, f"Tag '{tag}' adicionada.")
+        bot.edit_message_text(render_user_profile(target), call.message.chat.id, call.message.message_id,
+                              reply_markup=user_profile_kb(target), parse_mode='HTML')
+
+    elif action.startswith("u_reset_"):
+        target = int(action.replace("u_reset_", ""))
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("🚨 Sim, reset", callback_data=f"admin_u_resetgo_{target}"))
+        mk.add(telebot.types.InlineKeyboardButton("❌ Não", callback_data=f"admin_u_view_{target}"))
+        bot.edit_message_text(f"⚠️ <b>Reset User {target}</b>\n\nVai apagar créditos, flags, tags e histórico.\nContinuar?",
+                              call.message.chat.id, call.message.message_id, reply_markup=mk, parse_mode='HTML')
+
+    elif action.startswith("u_resetgo_"):
+        target = int(action.replace("u_resetgo_", ""))
+        # Reset flags
+        data = load_json(USER_FLAGS_FILE)
+        data.pop(str(target), None)
+        save_json(USER_FLAGS_FILE, data, FLAGS_LOCK)
+        # Reset credits to 0
+        c = load_json(CREDITS_FILE)
+        if str(target) in c:
+            c[str(target)]["creditos"] = 0
+            save_json(CREDITS_FILE, c, CREDITS_LOCK)
+        # Reset stats & history
+        s = load_json(STATISTICS_FILE)
+        s.pop(str(target), None)
+        save_json(STATISTICS_FILE, s, STATS_LOCK)
+        h = load_json(HISTORY_FILE)
+        h.pop(str(target), None)
+        save_json(HISTORY_FILE, h, HISTORY_LOCK)
+        log_system_event("warn", "user_reset", f"User {target} reset by admin {user_id}", target)
+        bot.answer_callback_query(call.id, "🧹 User resetado.", show_alert=True)
+        bot.edit_message_text(render_user_profile(target), call.message.chat.id, call.message.message_id,
+                              reply_markup=user_profile_kb(target), parse_mode='HTML')
+
+    elif action == "list_banned":
+        flags_data = load_json(USER_FLAGS_FILE)
+        banned = [(uid, f) for uid, f in flags_data.items() if f.get("banned")]
+        msg = f"🚫 <b>BANIDOS ({len(banned)})</b>\n\n"
+        mk = telebot.types.InlineKeyboardMarkup(row_width=1)
+        if not banned:
+            msg += "<i>(ninguém banido)</i>"
+        for uid, _ in banned[:20]:
+            mk.add(telebot.types.InlineKeyboardButton(f"👤 {uid}", callback_data=f"admin_u_view_{uid}"))
+        mk.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_sec_users"))
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=mk, parse_mode='HTML')
+
+    elif action == "list_shadow":
+        flags_data = load_json(USER_FLAGS_FILE)
+        shadowed = [(uid, f) for uid, f in flags_data.items() if f.get("shadowbanned")]
+        msg = f"👻 <b>SHADOWBANNED ({len(shadowed)})</b>\n\n"
+        mk = telebot.types.InlineKeyboardMarkup(row_width=1)
+        if not shadowed:
+            msg += "<i>(ninguém shadowed)</i>"
+        for uid, _ in shadowed[:20]:
+            mk.add(telebot.types.InlineKeyboardButton(f"👤 {uid}", callback_data=f"admin_u_view_{uid}"))
+        mk.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_sec_users"))
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=mk, parse_mode='HTML')
+
+    elif action == "list_vips":
+        flags_data = load_json(USER_FLAGS_FILE)
+        vips = [(uid, f) for uid, f in flags_data.items() if "VIP" in f.get("tags", [])]
+        msg = f"💎 <b>VIPs ({len(vips)})</b>\n\n"
+        mk = telebot.types.InlineKeyboardMarkup(row_width=1)
+        if not vips:
+            msg += "<i>(sem VIPs)</i>"
+        for uid, _ in vips[:20]:
+            mk.add(telebot.types.InlineKeyboardButton(f"💎 {uid}", callback_data=f"admin_u_view_{uid}"))
+        mk.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_sec_users"))
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=mk, parse_mode='HTML')
+
+    # ==================== ANALYTICS ====================
+    elif action == "top_spenders":
+        stats_data = load_json(STATISTICS_FILE)
+        pairs = []
+        for uid, s in stats_data.items():
+            total = int(s.get("total_creations", 0)) + int(s.get("total_edits", 0))
+            pairs.append((uid, total, s.get("total_spent", 0)))
+        pairs.sort(key=lambda x: (x[2], x[1]), reverse=True)
+        lines = ["💎 <b>TOP 10 SPENDERS</b>\n"]
+        for i, (uid, uses, spent) in enumerate(pairs[:10], 1):
+            lines.append(f"{i}. <code>{uid}</code> — €{spent/100 if spent else 0:.2f} | {uses} usos")
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_sec_analytics"))
+        bot.edit_message_text("\n".join(lines), call.message.chat.id, call.message.message_id, reply_markup=mk, parse_mode='HTML')
+
+    elif action == "retention":
+        flags_data = load_json(USER_FLAGS_FILE)
+        now = int(time.time())
+        d7 = now - 7*86400
+        d1 = now - 86400
+        active_7d = sum(1 for _, f in flags_data.items() if f.get("last_activity", 0) > d7)
+        active_1d = sum(1 for _, f in flags_data.items() if f.get("last_activity", 0) > d1)
+        total_users = len(load_json(CREDITS_FILE))
+        msg = (f"🔁 <b>RETENÇÃO</b>\n\n"
+               f"👥 Total users: <b>{total_users}</b>\n"
+               f"🔥 Ativos últimas 24h: <b>{active_1d}</b>\n"
+               f"📈 Ativos últimos 7d: <b>{active_7d}</b>\n"
+               f"📊 Retenção 7d: <b>{(active_7d/total_users*100 if total_users else 0):.1f}%</b>")
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_sec_analytics"))
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=mk, parse_mode='HTML')
+
+    elif action == "top_features":
+        stats_data = load_json(STATISTICS_FILE)
+        total_creations = sum(int(s.get("total_creations", 0)) for s in stats_data.values())
+        total_edits = sum(int(s.get("total_edits", 0)) for s in stats_data.values())
+        msg = (f"🤖 <b>FEATURES MAIS USADAS</b>\n\n"
+               f"🎨 Criações (text→image): <b>{total_creations}</b>\n"
+               f"✏️ Edições (Pro/Padrão/Art): <b>{total_edits}</b>\n"
+               f"📊 Total: <b>{total_creations + total_edits}</b>")
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_sec_analytics"))
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=mk, parse_mode='HTML')
+
+    elif action == "usage_period":
+        # Usa SYSTEM_LOGS para estimar atividade recente (gen/edit events)
+        logs = load_json(SYSTEM_LOGS_FILE).get("logs", [])
+        now = int(time.time())
+        d1 = now - 86400
+        d7 = now - 7*86400
+        last_24h = sum(1 for l in logs if l.get("ts", 0) > d1)
+        last_7d = sum(1 for l in logs if l.get("ts", 0) > d7)
+        msg = (f"🔥 <b>USO (via logs)</b>\n\n"
+               f"Eventos 24h: <b>{last_24h}</b>\n"
+               f"Eventos 7d: <b>{last_7d}</b>\n"
+               f"Total logs: <b>{len(logs)}</b>")
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_sec_analytics"))
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=mk, parse_mode='HTML')
+
+    elif action == "noop":
+        bot.answer_callback_query(call.id, "—")
+
 # ==================== COMANDOS ====================
 @bot.message_handler(commands=['start'])
 def cmd_start(message):
@@ -2777,6 +3761,64 @@ def cmd_painel(message):
     bot.send_message(message.chat.id, msg, reply_markup=admin_panel_keyboard(user_id), parse_mode='HTML')
     logger.info(f"Admin {user_id} acessou o painel")
 
+@bot.message_handler(commands=['report', 'denunciar'])
+def cmd_report(message):
+    """User reporta outro user: /report <user_id> <razao>"""
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        bot.reply_to(message, "Uso: <code>/report &lt;user_id&gt; &lt;razão&gt;</code>", parse_mode='HTML')
+        return
+    try:
+        target = int(parts[1])
+    except:
+        bot.reply_to(message, "❌ user_id inválido.")
+        return
+    if target == message.from_user.id:
+        bot.reply_to(message, "❌ Não te podes reportar a ti próprio.")
+        return
+    rid = add_report(message.from_user.id, target, parts[2])
+    log_system_event("warn", "user_report", f"{message.from_user.id} -> {target}: {parts[2][:80]}", target)
+    bot.reply_to(message, f"✅ Report enviado (ID: <code>{rid}</code>). Obrigado!", parse_mode='HTML')
+    # Notificar admin
+    for aid in ADMIN_IDS:
+        try:
+            bot.send_message(aid, f"🚨 <b>Novo Report</b>\nDe: {message.from_user.id}\nContra: {target}\nRazão: {parts[2][:200]}", parse_mode='HTML')
+        except:
+            pass
+
+
+@bot.message_handler(commands=['perfil'])
+def cmd_perfil(message):
+    """Admin: /perfil <user_id> | User: ver proprio perfil resumido"""
+    user_id = message.from_user.id
+    parts = message.text.split()
+
+    if len(parts) > 1:
+        if not is_any_admin(user_id):
+            bot.reply_to(message, "❌ So admin pode ver perfil de outros.")
+            return
+        try:
+            target = int(parts[1])
+            bot.send_message(message.chat.id, render_user_profile(target),
+                             reply_markup=user_profile_kb(target), parse_mode='HTML')
+        except:
+            bot.reply_to(message, "❌ user_id invalido.")
+        return
+
+    credits = get_user_credits(user_id)
+    stats = load_json(STATISTICS_FILE).get(str(user_id), {})
+    flags = get_user_flags(user_id)
+    tags_str = ", ".join(flags.get("tags", [])) or "—"
+    msg = (f"👤 <b>O teu perfil</b>\n\n"
+           f"🆔 <code>{user_id}</code>\n"
+           f"💳 Creditos: <b>{credits}</b>\n"
+           f"🎨 Criacoes: {stats.get('total_creations',0)}\n"
+           f"✏️ Edicoes: {stats.get('total_edits',0)}\n"
+           f"🏷️ Tags: {tags_str}")
+    bot.reply_to(message, msg, parse_mode='HTML')
+
+
+
 @bot.message_handler(func=lambda m: admin_states.get(m.from_user.id, "").startswith('awaiting_broadcast'))
 def handle_broadcast(message):
     """Handler para broadcast"""
@@ -2916,6 +3958,125 @@ def handle_custom_amount(message):
     except ValueError:
         bot.reply_to(message, "❌ Digite apenas números!\n\nExemplo: 250")
 
+# ==================== HANDLERS DE INPUT ADMIN (NOVOS) ====================
+@bot.message_handler(func=lambda m: admin_states.get(m.from_user.id, "") == 'awaiting_user_search')
+def handle_admin_user_search(message):
+    user_id = message.from_user.id
+    if user_id not in ADMIN_IDS:
+        return
+    admin_states.pop(user_id, None)
+    query = message.text.strip().lstrip("@")
+    target = None
+    try:
+        target = int(query)
+    except ValueError:
+        # Procurar por username em CREDITS_FILE via bot.get_chat
+        credits = load_json(CREDITS_FILE)
+        for uid_s in credits.keys():
+            try:
+                info = bot.get_chat(int(uid_s))
+                if getattr(info, "username", None) and info.username.lower() == query.lower():
+                    target = int(uid_s)
+                    break
+            except:
+                continue
+    if not target:
+        bot.reply_to(message, f"❌ User não encontrado: {query}")
+        return
+    bot.send_message(message.chat.id, render_user_profile(target),
+                     reply_markup=user_profile_kb(target), parse_mode='HTML')
+
+
+@bot.message_handler(func=lambda m: admin_states.get(m.from_user.id, "") == 'awaiting_nsfw_kw')
+def handle_admin_nsfw_kw(message):
+    user_id = message.from_user.id
+    if user_id not in ADMIN_IDS:
+        return
+    admin_states.pop(user_id, None)
+    if message.text.strip().lower() in ("/cancel", "cancel", "cancelar"):
+        bot.reply_to(message, "❌ Cancelado.")
+        return
+    new_kws = [k.strip().lower() for k in message.text.split(",") if k.strip()]
+    set_system_config("nsfw_keywords", new_kws)
+    log_system_event("info", "cfg_change", f"NSFW keywords atualizadas ({len(new_kws)})", user_id)
+    bot.reply_to(message, f"✅ {len(new_kws)} NSFW keywords guardadas.")
+
+
+@bot.message_handler(func=lambda m: admin_states.get(m.from_user.id, "") == 'awaiting_ratelimit')
+def handle_admin_ratelimit(message):
+    user_id = message.from_user.id
+    if user_id not in ADMIN_IDS:
+        return
+    admin_states.pop(user_id, None)
+    try:
+        val = int(message.text.strip())
+        if val < 1 or val > 1000:
+            raise ValueError
+        set_system_config("rate_limit_per_min", val)
+        log_system_event("info", "cfg_change", f"rate_limit={val}/min", user_id)
+        bot.reply_to(message, f"✅ Rate limit = {val}/min.")
+    except:
+        bot.reply_to(message, "❌ Número inválido (1-1000).")
+
+
+@bot.message_handler(func=lambda m: admin_states.get(m.from_user.id, "").startswith('awaiting_rm_credits_'))
+def handle_admin_rm_credits(message):
+    user_id = message.from_user.id
+    if user_id not in ADMIN_IDS:
+        return
+    state = admin_states.pop(user_id, "")
+    try:
+        target = int(state.replace("awaiting_rm_credits_", ""))
+        amount = int(message.text.strip())
+        c = load_json(CREDITS_FILE)
+        cur = c.get(str(target), {}).get("creditos", 0)
+        new_total = max(0, cur - amount)
+        if str(target) not in c:
+            c[str(target)] = {"creditos": 0}
+        c[str(target)]["creditos"] = new_total
+        save_json(CREDITS_FILE, c, CREDITS_LOCK)
+        log_system_event("info", "user_action", f"Admin removed {amount} credits from {target}", target)
+        bot.reply_to(message, f"✅ Removidos {amount} créd. Novo saldo: {new_total}")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Erro: {e}")
+
+
+@bot.message_handler(func=lambda m: admin_states.get(m.from_user.id, "").startswith('awaiting_broadcast_'))
+def handle_admin_broadcast_seg(message):
+    user_id = message.from_user.id
+    if user_id not in ADMIN_IDS:
+        return
+    state = admin_states.pop(user_id, "")
+    segment = state.replace("awaiting_broadcast_", "")  # all, active, vip
+    text = message.text
+
+    credits_data = load_json(CREDITS_FILE)
+    flags_data = load_json(USER_FLAGS_FILE)
+    now = int(time.time())
+
+    if segment == "all":
+        targets = list(credits_data.keys())
+    elif segment == "active":
+        d7 = now - 7*86400
+        targets = [uid for uid, f in flags_data.items() if f.get("last_activity", 0) > d7]
+    elif segment == "vip":
+        targets = [uid for uid, f in flags_data.items() if "VIP" in f.get("tags", [])]
+    else:
+        targets = []
+
+    sent = 0
+    failed = 0
+    for uid_s in targets:
+        try:
+            bot.send_message(int(uid_s), text, parse_mode='HTML')
+            sent += 1
+        except:
+            failed += 1
+    log_system_event("info", "broadcast", f"Segment={segment} sent={sent} failed={failed}", user_id)
+    bot.reply_to(message, f"📢 Broadcast enviado.\n✅ {sent} OK | ❌ {failed} falhas\nSegmento: {segment}")
+
+
+
 @bot.message_handler(func=lambda m: m.text == "📋 Menu")
 def handle_menu_button(message):
     """Handler para o botão Menu fixo"""
@@ -2947,6 +4108,15 @@ def handle_photo(message):
     if not is_onboarded(user_id):
         bot.reply_to(message, "👋 Envie /start para começar!")
         return
+
+    # GATE DE SEGURANCA (admin ignora tudo)
+    allowed, reason, extra = check_user_allowed(user_id, prompt=caption, check_rate=True)
+    if not allowed:
+        bot.reply_to(message, deny_message(lang, reason, extra), parse_mode='HTML')
+        return
+    if reason == "shadowban":
+        log_system_event("info", "shadowban_drop", f"Photo dropped for shadowbanned user {user_id}", user_id)
+        return  # engole silenciosamente
     
     # Se usuario esta a esperar imagem para video, redirecionar
     if user_states.get(user_id) == 'awaiting_video_image':
@@ -3164,7 +4334,34 @@ def callback_multi_model(call):
     if action == "padrao":
         Thread(target=execute_combine_padrao, args=(user_id, lang, caption)).start()
     elif action == "pro":
-        Thread(target=execute_combine_pro, args=(user_id, lang, caption)).start()
+        # Modelo Pro combinar - mostrar submenu (Personalizar | Deixa mais realista)
+        creditos = get_user_credits(user_id)
+        if creditos < MODELO_PRO["custo"]:
+            texts = {
+                "pt": f"❌ Créditos insuficientes! Modelo Pro precisa de {MODELO_PRO['custo']} créditos.\n💳 Tens: {creditos}",
+                "en": f"❌ Insufficient credits! Pro Model needs {MODELO_PRO['custo']} credits.\n💳 You have: {creditos}",
+                "es": f"❌ Créditos insuficientes! Modelo Pro necesita {MODELO_PRO['custo']} créditos.\n💳 Tienes: {creditos}"
+            }
+            bot.send_message(call.message.chat.id, texts.get(lang, texts["pt"]))
+            photo_collections.pop(user_id, None)
+            return
+
+        menu_texts = {
+            "pt": f"✨ <b>Modelo Pro — Combinar fotos</b> ({MODELO_PRO['custo']} créd)\n\nEscolha como queres combinar:",
+            "en": f"✨ <b>Pro Model — Combine photos</b> ({MODELO_PRO['custo']} cr)\n\nChoose how to combine:",
+            "es": f"✨ <b>Modelo Pro — Combinar fotos</b> ({MODELO_PRO['custo']} créd)\n\nElige cómo combinar:"
+        }
+        btn_texts = {
+            "pt": ("✏️ Personalizar", "📸 Deixa mais realista", "❌ Cancelar"),
+            "en": ("✏️ Custom prompt", "📸 Make it more realistic", "❌ Cancel"),
+            "es": ("✏️ Personalizar", "📸 Hazlo más realista", "❌ Cancelar")
+        }
+        b1, b2, b3 = btn_texts.get(lang, btn_texts["pt"])
+        markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+        markup.add(telebot.types.InlineKeyboardButton(b1, callback_data="pro_m_custom"))
+        markup.add(telebot.types.InlineKeyboardButton(b2, callback_data="pro_m_realista"))
+        markup.add(telebot.types.InlineKeyboardButton(b3, callback_data="pro_m_cancel"))
+        bot.send_message(call.message.chat.id, menu_texts.get(lang, menu_texts["pt"]), reply_markup=markup, parse_mode='HTML')
     elif action == "artistico":
         # Mostrar estilos artisticos
         markup = telebot.types.InlineKeyboardMarkup(row_width=3)
@@ -3435,6 +4632,16 @@ def handle_carousel_prompt(message):
     num_slides = len(collection["photos"])
     style_key = collection.get("carousel_style", "livre")
     prompt = message.text.strip()
+
+    # GATE NSFW (admin ignora)
+    allowed, reason, extra = check_user_allowed(user_id, prompt=prompt, check_rate=False)
+    if not allowed:
+        bot.reply_to(message, deny_message(lang, reason, extra), parse_mode='HTML')
+        photo_collections.pop(user_id, None)
+        return
+    if reason == "shadowban":
+        photo_collections.pop(user_id, None)
+        return
     
     # Verificar créditos
     creditos = get_user_credits(user_id)
@@ -3626,7 +4833,7 @@ def callback_photo_model(call):
         return
     
     if action == "pro":
-        # Modelo Pro - 2 creditos, prompt fixo
+        # Modelo Pro - mostrar submenu (Personalizar | Deixa mais realista)
         creditos = get_user_credits(user_id)
         if creditos < MODELO_PRO["custo"]:
             texts = {
@@ -3637,62 +4844,32 @@ def callback_photo_model(call):
             bot.answer_callback_query(call.id, "Créditos insuficientes!")
             bot.edit_message_text(texts.get(lang, texts["pt"]), call.message.chat.id, call.message.message_id, parse_mode='HTML')
             return
-        
-        if not use_credit(user_id, MODELO_PRO["custo"]):
-            return
-        
+
+        # Guardar foto de volta para proxima etapa
+        pending_photos[user_id] = photo_data
+
         try:
             bot.delete_message(call.message.chat.id, call.message.message_id)
         except:
             pass
-        
-        proc_texts = {
-            "pt": "✨ <b>Modelo Pro ativado!</b>\nAplicando melhoria fotorrealista avancada...\nIsto pode demorar um pouco.",
-            "en": "✨ <b>Pro Model activated!</b>\nApplying advanced photorealistic enhancement...\nThis may take a moment.",
-            "es": "✨ <b>Modelo Pro activado!</b>\nAplicando mejora fotorrealista avanzada...\nEsto puede tardar un poco."
+
+        menu_texts = {
+            "pt": f"✨ <b>Modelo Pro</b> ({MODELO_PRO['custo']} créd)\n\nEscolha como queres editar:",
+            "en": f"✨ <b>Pro Model</b> ({MODELO_PRO['custo']} cr)\n\nChoose how to edit:",
+            "es": f"✨ <b>Modelo Pro</b> ({MODELO_PRO['custo']} créd)\n\nElige cómo editar:"
         }
-        proc_msg = bot.send_message(call.message.chat.id, proc_texts.get(lang, proc_texts["pt"]), parse_mode='HTML')
-        
-        try:
-            file_info = bot.get_file(photo_data["file_id"])
-            downloaded_file = bot.download_file(file_info.file_path)
-            image_base64 = base64.b64encode(downloaded_file).decode('utf-8')
-            image_data_url = f"data:image/jpeg;base64,{image_base64}"
-            
-            urls = gerar_imagem_pro(image_input=image_data_url)
-            
-            bot.delete_message(call.message.chat.id, proc_msg.message_id)
-            
-            for url in urls:
-                img_data = requests.get(url, timeout=60).content
-                creation_id = add_to_history(user_id, "edit", MODELO_PRO["prompt_fixo"], url)
-                creditos_restantes = get_user_credits(user_id)
-                
-                caption_texts = {
-                    "pt": f"✨ <b>Melhoria Pro aplicada!</b>\n🤖 Modelo: Pro (FLUX.2 Klein 9B)\n💳 Créditos restantes: <code>{creditos_restantes}</code>",
-                    "en": f"✨ <b>Pro enhancement applied!</b>\n🤖 Model: Pro (FLUX.2 Klein 9B)\n💳 Credits remaining: <code>{creditos_restantes}</code>",
-                    "es": f"✨ <b>Mejora Pro aplicada!</b>\n🤖 Modelo: Pro (FLUX.2 Klein 9B)\n💳 Créditos restantes: <code>{creditos_restantes}</code>"
-                }
-                bot.send_photo(call.message.chat.id, img_data, caption=caption_texts.get(lang, caption_texts["pt"]),
-                             reply_markup=creation_actions_keyboard(creation_id, lang), parse_mode='HTML')
-            
-            update_user_stats(user_id, "total_edits")
-            logger.info(f"Edicao Pro para user {user_id}")
-            
-        except Exception as e:
-            add_credits(user_id, MODELO_PRO["custo"], "reembolso")
-            save_user_error(user_id, "edicao_pro", str(e), "Edicao Pro")
-            diagnose_and_notify(e, "edicao_pro")
-            error_texts = {
-                "pt": "❌ Erro ao processar com Modelo Pro. Créditos reembolsados.",
-                "en": "❌ Pro Model processing error. Credits refunded.",
-                "es": "❌ Error al procesar con Modelo Pro. Créditos reembolsados."
-            }
-            try:
-                bot.edit_message_text(error_texts.get(lang, error_texts["pt"]), call.message.chat.id, proc_msg.message_id)
-            except:
-                bot.send_message(call.message.chat.id, error_texts.get(lang, error_texts["pt"]))
-            logger.error(f"Erro Pro: {e}")
+        btn_texts = {
+            "pt": ("✏️ Personalizar", "📸 Deixa mais realista", "❌ Cancelar"),
+            "en": ("✏️ Custom prompt", "📸 Make it more realistic", "❌ Cancel"),
+            "es": ("✏️ Personalizar", "📸 Hazlo más realista", "❌ Cancelar")
+        }
+        b1, b2, b3 = btn_texts.get(lang, btn_texts["pt"])
+        markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+        markup.add(telebot.types.InlineKeyboardButton(b1, callback_data="pro_s_custom"))
+        markup.add(telebot.types.InlineKeyboardButton(b2, callback_data="pro_s_realista"))
+        markup.add(telebot.types.InlineKeyboardButton(b3, callback_data="pro_s_cancel"))
+        bot.send_message(call.message.chat.id, menu_texts.get(lang, menu_texts["pt"]), reply_markup=markup, parse_mode='HTML')
+        return
     
     elif action == "padrao":
         # Modelo Padrao - 1 credito
@@ -3793,6 +4970,275 @@ def callback_photo_model(call):
             markup.row(*row)
         markup.add(telebot.types.InlineKeyboardButton("❌ Cancelar", callback_data="artstyle_cancel"))
         bot.send_message(call.message.chat.id, "🎭 <b>Escolha o estilo:</b> (2 cred)", reply_markup=markup, parse_mode='HTML')
+
+
+# ==================== MODELO PRO — SUBMENU (FOTO UNICA) ====================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('pro_s_'))
+def callback_pro_single(call):
+    """Handler do submenu do Modelo Pro para foto unica"""
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    action = call.data.replace('pro_s_', '')
+
+    if action == "cancel":
+        pending_photos.pop(user_id, None)
+        user_states.pop(user_id, None)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
+        cancel_texts = {"pt": "❌ Cancelado.", "en": "❌ Cancelled.", "es": "❌ Cancelado."}
+        bot.send_message(call.message.chat.id, cancel_texts.get(lang, cancel_texts["pt"]))
+        return
+
+    if user_id not in pending_photos:
+        bot.answer_callback_query(call.id, "Foto expirada! Envie novamente.")
+        return
+
+    if action == "custom":
+        # Pedir prompt customizado ao usuario
+        bot.answer_callback_query(call.id, "Escreva o que deseja!")
+        user_states[user_id] = "awaiting_pro_s_prompt"
+        texts = {
+            "pt": "✍️ <b>Modelo Pro — Personalizar</b>\n\nEscreve o que queres fazer na imagem (ex: <i>remove o fundo, adiciona oculos, muda cor do cabelo</i>):",
+            "en": "✍️ <b>Pro Model — Custom</b>\n\nWrite what you want to do to the image (e.g., <i>remove background, add glasses, change hair color</i>):",
+            "es": "✍️ <b>Modelo Pro — Personalizar</b>\n\nEscribe lo que quieres hacer en la imagen (ej: <i>quita el fondo, añade gafas, cambia color del pelo</i>):"
+        }
+        try:
+            bot.edit_message_text(texts.get(lang, texts["pt"]), call.message.chat.id, call.message.message_id, parse_mode='HTML')
+        except:
+            bot.send_message(call.message.chat.id, texts.get(lang, texts["pt"]), parse_mode='HTML')
+        return
+
+    if action == "realista":
+        # Mostrar submenu com 3 presets
+        texts = {
+            "pt": "📸 <b>Escolhe o tipo de realismo:</b>",
+            "en": "📸 <b>Choose the realism type:</b>",
+            "es": "📸 <b>Elige el tipo de realismo:</b>"
+        }
+        markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+        markup.add(telebot.types.InlineKeyboardButton(PRO_PRESETS["original"]["nome"], callback_data="pro_s_p_original"))
+        markup.add(telebot.types.InlineKeyboardButton(PRO_PRESETS["expression"]["nome"], callback_data="pro_s_p_expression"))
+        markup.add(telebot.types.InlineKeyboardButton(PRO_PRESETS["softer"]["nome"], callback_data="pro_s_p_softer"))
+        back_label = "⬅️ Voltar" if lang == "pt" else ("⬅️ Back" if lang == "en" else "⬅️ Volver")
+        markup.add(telebot.types.InlineKeyboardButton(back_label, callback_data="pro_s_back"))
+        try:
+            bot.edit_message_text(texts.get(lang, texts["pt"]), call.message.chat.id, call.message.message_id,
+                                  reply_markup=markup, parse_mode='HTML')
+        except:
+            bot.send_message(call.message.chat.id, texts.get(lang, texts["pt"]), reply_markup=markup, parse_mode='HTML')
+        return
+
+    if action == "back":
+        # Voltar para o menu Pro principal
+        menu_texts = {
+            "pt": f"✨ <b>Modelo Pro</b> ({MODELO_PRO['custo']} créd)\n\nEscolha como queres editar:",
+            "en": f"✨ <b>Pro Model</b> ({MODELO_PRO['custo']} cr)\n\nChoose how to edit:",
+            "es": f"✨ <b>Modelo Pro</b> ({MODELO_PRO['custo']} créd)\n\nElige cómo editar:"
+        }
+        btn_texts = {
+            "pt": ("✏️ Personalizar", "📸 Deixa mais realista", "❌ Cancelar"),
+            "en": ("✏️ Custom prompt", "📸 Make it more realistic", "❌ Cancel"),
+            "es": ("✏️ Personalizar", "📸 Hazlo más realista", "❌ Cancelar")
+        }
+        b1, b2, b3 = btn_texts.get(lang, btn_texts["pt"])
+        markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+        markup.add(telebot.types.InlineKeyboardButton(b1, callback_data="pro_s_custom"))
+        markup.add(telebot.types.InlineKeyboardButton(b2, callback_data="pro_s_realista"))
+        markup.add(telebot.types.InlineKeyboardButton(b3, callback_data="pro_s_cancel"))
+        try:
+            bot.edit_message_text(menu_texts.get(lang, menu_texts["pt"]), call.message.chat.id, call.message.message_id,
+                                  reply_markup=markup, parse_mode='HTML')
+        except:
+            pass
+        return
+
+    if action.startswith("p_"):
+        # Preset de realismo escolhido
+        preset_key = action.replace("p_", "")
+        preset = PRO_PRESETS.get(preset_key)
+        if not preset:
+            bot.answer_callback_query(call.id, "Preset invalido.")
+            return
+
+        photo_data = pending_photos.pop(user_id)
+        user_states.pop(user_id, None)
+
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
+
+        Thread(target=execute_pro_single,
+               args=(call.message.chat.id, user_id, lang, photo_data, preset["prompt"], preset["nome"])).start()
+        return
+
+
+@bot.message_handler(func=lambda m: user_states.get(m.from_user.id) == 'awaiting_pro_s_prompt')
+def handle_pro_single_custom_prompt(message):
+    """Recebe o prompt custom para Modelo Pro em foto unica"""
+    user_id = message.from_user.id
+    lang = get_user_lang(user_id)
+    user_states.pop(user_id, None)
+
+    if user_id not in pending_photos:
+        bot.reply_to(message, "❌ Foto expirada! Envia novamente.")
+        return
+
+    prompt = (message.text or "").strip()
+    is_valid, error = validate_prompt(prompt)
+    if not is_valid:
+        bot.reply_to(message, f"❌ {error}")
+        pending_photos.pop(user_id, None)
+        return
+
+    # GATE NSFW (admin ignora)
+    allowed, reason, extra = check_user_allowed(user_id, prompt=prompt, check_rate=False)
+    if not allowed:
+        bot.reply_to(message, deny_message(lang, reason, extra), parse_mode='HTML')
+        pending_photos.pop(user_id, None)
+        return
+    if reason == "shadowban":
+        pending_photos.pop(user_id, None)
+        return
+
+    photo_data = pending_photos.pop(user_id)
+    Thread(target=execute_pro_single,
+           args=(message.chat.id, user_id, lang, photo_data, prompt, None)).start()
+
+
+# ==================== MODELO PRO — SUBMENU (COMBINAR FOTOS) ====================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('pro_m_'))
+def callback_pro_multi(call):
+    """Handler do submenu do Modelo Pro para combinar varias fotos"""
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    action = call.data.replace('pro_m_', '')
+
+    if action == "cancel":
+        photo_collections.pop(user_id, None)
+        user_states.pop(user_id, None)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
+        cancel_texts = {"pt": "❌ Cancelado.", "en": "❌ Cancelled.", "es": "❌ Cancelado."}
+        bot.send_message(call.message.chat.id, cancel_texts.get(lang, cancel_texts["pt"]))
+        return
+
+    if user_id not in photo_collections:
+        bot.answer_callback_query(call.id, "Fotos expiradas! Envia novamente.")
+        return
+
+    if action == "custom":
+        bot.answer_callback_query(call.id, "Escreve o que queres!")
+        user_states[user_id] = "awaiting_pro_m_prompt"
+        texts = {
+            "pt": "✍️ <b>Modelo Pro — Combinar (Personalizar)</b>\n\nEscreve o que queres fazer com as fotos (ex: <i>coloca todos numa praia ao por do sol</i>):",
+            "en": "✍️ <b>Pro Model — Combine (Custom)</b>\n\nWrite what you want to do with the photos (e.g., <i>put everyone on a beach at sunset</i>):",
+            "es": "✍️ <b>Modelo Pro — Combinar (Personalizar)</b>\n\nEscribe lo que quieres hacer con las fotos (ej: <i>ponlos a todos en una playa al atardecer</i>):"
+        }
+        try:
+            bot.edit_message_text(texts.get(lang, texts["pt"]), call.message.chat.id, call.message.message_id, parse_mode='HTML')
+        except:
+            bot.send_message(call.message.chat.id, texts.get(lang, texts["pt"]), parse_mode='HTML')
+        return
+
+    if action == "realista":
+        texts = {
+            "pt": "📸 <b>Escolhe o tipo de realismo:</b>",
+            "en": "📸 <b>Choose the realism type:</b>",
+            "es": "📸 <b>Elige el tipo de realismo:</b>"
+        }
+        markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+        markup.add(telebot.types.InlineKeyboardButton(PRO_PRESETS["original"]["nome"], callback_data="pro_m_p_original"))
+        markup.add(telebot.types.InlineKeyboardButton(PRO_PRESETS["expression"]["nome"], callback_data="pro_m_p_expression"))
+        markup.add(telebot.types.InlineKeyboardButton(PRO_PRESETS["softer"]["nome"], callback_data="pro_m_p_softer"))
+        back_label = "⬅️ Voltar" if lang == "pt" else ("⬅️ Back" if lang == "en" else "⬅️ Volver")
+        markup.add(telebot.types.InlineKeyboardButton(back_label, callback_data="pro_m_back"))
+        try:
+            bot.edit_message_text(texts.get(lang, texts["pt"]), call.message.chat.id, call.message.message_id,
+                                  reply_markup=markup, parse_mode='HTML')
+        except:
+            bot.send_message(call.message.chat.id, texts.get(lang, texts["pt"]), reply_markup=markup, parse_mode='HTML')
+        return
+
+    if action == "back":
+        menu_texts = {
+            "pt": f"✨ <b>Modelo Pro — Combinar fotos</b> ({MODELO_PRO['custo']} créd)\n\nEscolha como queres combinar:",
+            "en": f"✨ <b>Pro Model — Combine photos</b> ({MODELO_PRO['custo']} cr)\n\nChoose how to combine:",
+            "es": f"✨ <b>Modelo Pro — Combinar fotos</b> ({MODELO_PRO['custo']} créd)\n\nElige cómo combinar:"
+        }
+        btn_texts = {
+            "pt": ("✏️ Personalizar", "📸 Deixa mais realista", "❌ Cancelar"),
+            "en": ("✏️ Custom prompt", "📸 Make it more realistic", "❌ Cancel"),
+            "es": ("✏️ Personalizar", "📸 Hazlo más realista", "❌ Cancelar")
+        }
+        b1, b2, b3 = btn_texts.get(lang, btn_texts["pt"])
+        markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+        markup.add(telebot.types.InlineKeyboardButton(b1, callback_data="pro_m_custom"))
+        markup.add(telebot.types.InlineKeyboardButton(b2, callback_data="pro_m_realista"))
+        markup.add(telebot.types.InlineKeyboardButton(b3, callback_data="pro_m_cancel"))
+        try:
+            bot.edit_message_text(menu_texts.get(lang, menu_texts["pt"]), call.message.chat.id, call.message.message_id,
+                                  reply_markup=markup, parse_mode='HTML')
+        except:
+            pass
+        return
+
+    if action.startswith("p_"):
+        preset_key = action.replace("p_", "")
+        preset = PRO_PRESETS.get(preset_key)
+        if not preset:
+            bot.answer_callback_query(call.id, "Preset invalido.")
+            return
+
+        caption = photo_collections[user_id].get("caption", "")
+        user_states.pop(user_id, None)
+
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
+
+        Thread(target=execute_combine_pro,
+               args=(user_id, lang, caption, preset["prompt"])).start()
+        return
+
+
+@bot.message_handler(func=lambda m: user_states.get(m.from_user.id) == 'awaiting_pro_m_prompt')
+def handle_pro_multi_custom_prompt(message):
+    """Recebe prompt custom para Modelo Pro combinar varias fotos"""
+    user_id = message.from_user.id
+    lang = get_user_lang(user_id)
+    user_states.pop(user_id, None)
+
+    if user_id not in photo_collections:
+        bot.reply_to(message, "❌ Fotos expiradas! Envia novamente.")
+        return
+
+    prompt = (message.text or "").strip()
+    is_valid, error = validate_prompt(prompt)
+    if not is_valid:
+        bot.reply_to(message, f"❌ {error}")
+        photo_collections.pop(user_id, None)
+        return
+
+    # GATE NSFW (admin ignora)
+    allowed, reason, extra = check_user_allowed(user_id, prompt=prompt, check_rate=False)
+    if not allowed:
+        bot.reply_to(message, deny_message(lang, reason, extra), parse_mode='HTML')
+        photo_collections.pop(user_id, None)
+        return
+    if reason == "shadowban":
+        photo_collections.pop(user_id, None)
+        return
+
+    caption = photo_collections[user_id].get("caption", "")
+    Thread(target=execute_combine_pro,
+           args=(user_id, lang, caption, prompt)).start()
+
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('artstyle_'))
 def callback_art_style(call):
@@ -3959,6 +5405,14 @@ def handle_edit_prompt(message):
     is_valid, error = validate_prompt(prompt)
     if not is_valid:
         bot.reply_to(message, f"❌ {error}")
+        return
+
+    # GATE NSFW (admin ignora)
+    allowed, reason, extra = check_user_allowed(user_id, prompt=prompt, check_rate=False)
+    if not allowed:
+        bot.reply_to(message, deny_message(lang, reason, extra), parse_mode='HTML')
+        return
+    if reason == "shadowban":
         return
     
     creditos = get_user_credits(user_id)
