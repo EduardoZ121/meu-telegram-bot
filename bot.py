@@ -40,6 +40,9 @@ BOT_USERNAME = "RemakePix_bot"
 SUPORTE_TELEGRAM = "@Remake_Pixel_adm"
 SECONDARY_ADMINS_FILE = "secondary_admins.json"
 
+# Canal público para galeria automatica (ex: @RemakePixel_Gallery ou -1001234567890)
+GALLERY_CHANNEL = os.getenv("GALLERY_CHANNEL", "@RemakePixel_Gallery")
+
 BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -1598,16 +1601,17 @@ def personality_keyboard(lang="pt"):
 def creation_actions_keyboard(creation_id, lang="pt"):
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     texts = {
-        "pt": ["⭐ Favoritar", "🔗 Compartilhar"],
-        "en": ["⭐ Favorite", "🔗 Share"],
-        "es": ["⭐ Favorito", "🔗 Compartir"],
-        "fr": ["⭐ Favori", "🔗 Partager"]
+        "pt": ["⭐ Favoritar", "🔗 Compartilhar", "📢 Publicar na Galeria"],
+        "en": ["⭐ Favorite", "🔗 Share", "📢 Publish to Gallery"],
+        "es": ["⭐ Favorito", "🔗 Compartir", "📢 Publicar en Galería"],
+        "fr": ["⭐ Favori", "🔗 Partager", "📢 Publier à la Galerie"]
     }
     t = texts.get(lang, texts["pt"])
     markup.add(
         telebot.types.InlineKeyboardButton(t[0], callback_data=f"fav_{creation_id}"),
         telebot.types.InlineKeyboardButton(t[1], callback_data=f"share_{creation_id}")
     )
+    markup.add(telebot.types.InlineKeyboardButton(t[2], callback_data=f"gallery_{creation_id}"))
     return markup
 
 # ==================== HELPERS ====================
@@ -2323,6 +2327,85 @@ def callback_share(call):
         }
         bot.answer_callback_query(call.id, "✅ Link criado!")
         bot.send_message(call.message.chat.id, texts.get(lang, texts["pt"]), parse_mode='HTML')
+
+
+# ==================== GALERIA PUBLICA (VIRAL LOOP) ====================
+# Publica criacao anonima no canal publico + CTA para o bot
+def _already_published_gallery(user_id, creation_id):
+    data = load_json("gallery_published.json")
+    key = f"{user_id}_{creation_id}"
+    return key in data
+
+def _mark_published_gallery(user_id, creation_id):
+    data = load_json("gallery_published.json")
+    key = f"{user_id}_{creation_id}"
+    data[key] = {"ts": int(time.time())}
+    save_json("gallery_published.json", data, Lock())
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('gallery_'))
+def callback_gallery(call):
+    """Publica criacao no canal publico (galeria)"""
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    creation_id = call.data.replace('gallery_', '')
+
+    # Gate de seguranca (admin bypassa)
+    allowed, reason, extra = check_user_allowed(user_id, prompt=None, check_rate=False)
+    if not allowed and reason != "shadowban":
+        bot.answer_callback_query(call.id, "❌ Não permitido no momento.", show_alert=True)
+        return
+
+    if _already_published_gallery(user_id, creation_id):
+        bot.answer_callback_query(call.id, "✅ Já publicado anteriormente.")
+        return
+
+    creation = get_creation_by_id(user_id, creation_id)
+    if not creation:
+        bot.answer_callback_query(call.id, "❌ Criação não encontrada.")
+        return
+
+    image_url = creation.get("image_url") or creation.get("url")
+    prompt_text = (creation.get("prompt") or "")[:180]
+    if not image_url:
+        bot.answer_callback_query(call.id, "❌ Imagem indisponível.")
+        return
+
+    # Caption anonima + CTA
+    cta_texts = {
+        "pt": "Criado com @{u} — gera o teu: t.me/{u}",
+        "en": "Created with @{u} — make yours: t.me/{u}",
+        "es": "Creado con @{u} — haz el tuyo: t.me/{u}"
+    }
+    cta = cta_texts.get(lang, cta_texts["pt"]).format(u=BOT_USERNAME)
+    caption = f"✨ <i>{prompt_text}</i>\n\n{cta}" if prompt_text else cta
+
+    # Botao inline "Abrir bot"
+    ikm = telebot.types.InlineKeyboardMarkup()
+    ikm.add(telebot.types.InlineKeyboardButton("🤖 Criar o meu →", url=f"https://t.me/{BOT_USERNAME}"))
+
+    try:
+        # Descarrega imagem e envia para o canal
+        img_bytes = requests.get(image_url, timeout=60).content
+        bot.send_photo(GALLERY_CHANNEL, img_bytes, caption=caption,
+                       reply_markup=ikm, parse_mode='HTML')
+        _mark_published_gallery(user_id, creation_id)
+        # +2 creditos bonus por publicar (incentivo viral)
+        add_credits(user_id, 2, "gallery_publish")
+        log_system_event("info", "gallery_publish", f"u={user_id} c={creation_id}", user_id)
+        success_texts = {
+            "pt": "✅ Publicado na galeria! +2 créditos bónus 🎁",
+            "en": "✅ Published! +2 bonus credits 🎁",
+            "es": "✅ ¡Publicado! +2 créditos bonus 🎁"
+        }
+        bot.answer_callback_query(call.id, success_texts.get(lang, success_texts["pt"]), show_alert=True)
+    except Exception as e:
+        err = str(e).lower()
+        log_system_event("error", "gallery_publish_fail", str(e), user_id)
+        if "chat not found" in err or "bot is not a member" in err:
+            bot.answer_callback_query(call.id, "⚠️ Canal não configurado. Avisa o admin.", show_alert=True)
+        else:
+            bot.answer_callback_query(call.id, f"❌ Erro: {str(e)[:80]}", show_alert=True)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
 def callback_buy(call):
