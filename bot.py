@@ -1485,85 +1485,139 @@ carousel_states = {}
 bot_paused = False
 pause_message = ""
 
+def detect_image_intent(text):
+    """Deteta se user quer GERAR imagem do zero (sem foto).
+    VERSAO CONSERVADORA: so dispara em frases que pedem CLARAMENTE
+    uma geracao direta, nao em descricoes ambiguas.
+    Casos ambiguos -> retorna False, o chat IA decide.
+    """
+    if not text:
+        return False
+    text_lower = text.lower().strip()
+
+    # Patterns que claramente indicam geracao direta
+    # (precisam ter verbo imperativo + objeto imagem)
+    import re as _re
+    direct_patterns = [
+        r'^(gera|gere|gerar|cria|crie|criar|faca|faz|faça|desenha|desenhe|generate|create|make|draw|dibuja|crea|dame|give me|show me)\s+(uma|um|a|an|a |an )?\s*(imagem|foto|picture|image|imagen|photo|pic|flyer|flayer|poster|cartaz)\s',
+        r'^(uma|um|a|an)\s+(imagem|foto|picture|image|imagen)\s+de\s+',
+        r'^(imagine|imagina|imagina|visualize)\s+',
+        r'^(quero|queria|preciso|i want|need)\s+(uma|um|a|an)\s+(imagem|foto|picture|image)\b',
+    ]
+    for pat in direct_patterns:
+        if _re.search(pat, text_lower):
+            return True
+
+    # Se for muito curto (<5 palavras) e so descritivo — ambiguo, deixa chat decidir
+    return False
+
+
+def classify_user_intent_ai(text, lang="pt"):
+    """Classifica intent usando AI: 'chat', 'generate', 'edit_help', 'idea_help'.
+    Usa GPT-4o-mini (barato). Retorna dict {intent, reasoning, suggested_prompt}
+    """
+    try:
+        system = (
+            "You are an intent classifier for a Telegram AI photo bot. "
+            "Classify the user message into ONE of these intents:\n"
+            "- 'chat': casual conversation, greetings, questions about bot\n"
+            "- 'generate': user wants to GENERATE a NEW image from scratch RIGHT NOW with clear description\n"
+            "- 'edit_help': user has photos to edit/merge and needs guidance\n"
+            "- 'idea_help': user needs creative ideas, is stuck, wants suggestions\n"
+            "Return ONLY valid JSON: {\"intent\": \"...\", \"ready_to_generate\": true/false, \"clean_prompt\": \"...\"}\n"
+            "'ready_to_generate' = true ONLY if user gave a detailed enough description (>5 meaningful words).\n"
+            "'clean_prompt' = extracted visual description in English (empty if not ready)."
+        )
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": text[:500]}
+            ],
+            max_tokens=150,
+            temperature=0.1,
+            response_format={"type": "json_object"}
+        )
+        import json as _json
+        result = _json.loads(resp.choices[0].message.content)
+        return result
+    except Exception as e:
+        logger.warning(f"intent classify err: {e}")
+        return {"intent": "chat", "ready_to_generate": False, "clean_prompt": ""}
+
+
 def get_smart_chat_response(user_id, message, lang="pt"):
-    """Chat IA com personalidades e memória de erros"""
+    """Chat IA — assistente criativo proativo.
+    Sabe pedir fotos, sugerir ideias, guiar o utilizador."""
     try:
         if user_id not in chat_contexts:
             chat_contexts[user_id] = []
-        
+
         chat_contexts[user_id].append({"role": "user", "content": message})
-        if len(chat_contexts[user_id]) > 10:
-            chat_contexts[user_id] = chat_contexts[user_id][-10:]
-        
+        if len(chat_contexts[user_id]) > 12:
+            chat_contexts[user_id] = chat_contexts[user_id][-12:]
+
         creditos = get_user_credits(user_id)
-        erros_recentes = get_user_errors(user_id)
         personality = get_user_personality(user_id)
         personality_info = AI_PERSONALITIES[personality]
-        
-        erros_context = ""
-        if erros_recentes:
-            erros_context = "\n\nÚLTIMOS ERROS DO USUÁRIO:\n"
-            for err in erros_recentes[:3]:
-                erros_context += f"- {err['type']}: {err['message']}\n"
-        
+
         lang_names = {"pt": "Português", "en": "English", "es": "Español", "fr": "Français"}
-        
-        bot_knowledge = """
-CONHECIMENTO COMPLETO DO BOT REMAKE PIXEL:
 
-FUNCIONALIDADES:
-1. GERAR IMAGENS: Menu → Gerar Fotos → escrever descrição → IA gera (1 crédito por imagem)
-2. EDITAR FOTOS: Enviar foto no chat → escolher modelo (Padrão/Pro/Artístico)
-3. COMBINAR FOTOS: Enviar 2-5 fotos juntas → escolher modelo
-4. CARROSSEL: Menu → Carrossel → escolher slides (2-4) → descrever cada slide (1 cred/slide)
-5. CHAT IA: Escrever qualquer mensagem → resposta grátis
+        assistant_prompt = f"""{personality_info['system']}
 
-MODELOS DE EDIÇÃO:
-- Padrão (1 crédito): Precisa de prompt/descrição. Ex: 'melhore qualidade', 'remova fundo'
-- Pro (3 créditos): Melhoria fotorrealista AUTOMÁTICA. Não precisa prompt.
-- Artístico (2 créditos): 33 estilos artísticos (anime, Disney, cyberpunk, etc.)
+LÍNGUA: Responde SEMPRE em {lang_names.get(lang, 'Português')}.
 
-CONFIGURAÇÕES (Menu → Config):
-- Estilos: 34 opções (Livre/Personalizado é o padrão). Aplica-se a GERAÇÕES e EDIÇÕES.
-- Formato: Vertical (3:4), Quadrado (1:1), Horizontal (16:9), Story/TikTok (9:16), Instagram (4:5), Ultrawide (21:9)
-- Variações: 1-4 imagens por geração
-- Personalidade IA: Criativo, Técnico, Casual, Profissional
+ÉS O ASSISTENTE CRIATIVO do Remake_Pixel (bot Telegram de edição de fotos IA).
 
-CRÉDITOS:
-- Novos utilizadores: 5 créditos grátis
-- Pacotes: Básico (120 cred/5€), Médio (350 cred/12€), Pro (800 cred/22€)
-- Comprar: Menu → Comprar → escolher pacote → aguardar aprovação → pagar com cartão
-- Referral: Indicar amigo → quando comprar 5€+ → recebe 10 créditos grátis
+🎨 QUANDO O UTILIZADOR ESTÁ SEM IDEIAS:
+- Faz 2-3 perguntas curtas para perceber o estilo dele (moderno/retro, cores, mood)
+- Sugere 3 ideias concretas e diferentes
+- Oferece gerar uma delas (1 crédito)
 
-COMANDOS:
-/menu - Menu principal
-/start - Reiniciar/primeiro acesso
-/wizard - Assistente de criação guiado
-/creditos - Ver saldo
-/idioma - Mudar idioma
-/termos - Termos de uso
-/video - Gerar vídeo (admin apenas)
+📸 QUANDO QUER EDITAR/COMBINAR FOTOS (ex: flyer, juntar 2 pessoas):
+- NÃO gera imagem aleatória! Pede: "Envia-me as fotos aqui no chat (podes enviar 2 a 5 juntas)."
+- Explica: "Depois escolhe 'Modelo Pro' para qualidade máxima ou 'Padrão' para rápido."
+- Se for flyer: pergunta texto/cores/estilo DEPOIS das fotos chegarem.
 
-DICAS:
-- Prompts em qualquer idioma (traduzido automaticamente para inglês)
-- Responder a uma foto gerada com texto → reedita essa foto (1 crédito)
-- Para mudar estilo: Config → Estilos → escolher
-- Erros reembolsam créditos automaticamente
-"""
-        system_prompt = personality_info['system'] + "\n\nSEMPRE responda em " + lang_names.get(lang, 'Português') + ".\n\n" + bot_knowledge + "\n\nINFORMAÇÕES DO USUÁRIO:\n- Créditos: " + str(creditos) + "\n- Personalidade atual: " + personality_info['nome'] + erros_context + "\n\nREGRAS:\n- Você É o assistente do Remake Pixel\n- Guie o utilizador passo a passo\n- Se pedir para gerar imagem, diga para usar o botão 'Gerar Fotos' no menu ou escrever a descrição\n- NUNCA sugira ferramentas externas\n- Suporte humano: " + SUPORTE_TELEGRAM + "\n- Seja proativo, simpático e útil"
-        
-        messages = [{"role": "system", "content": system_prompt}]
+💡 QUANDO PEDE QUESTIONÁRIO/HELP PARA CRIAR:
+- NÃO gera imagem! Guia passo a passo:
+  1. "Que tipo de imagem? (retrato / paisagem / flyer / arte / outro)"
+  2. "Estilo? (realista / anime / cyberpunk / minimalista / etc)"
+  3. "Cores principais?"
+  4. "Algum elemento obrigatório?"
+- Depois: "Posso gerar agora — confirmas com 'sim'?"
+
+🚫 NUNCA:
+- Gerar imagem sem o user confirmar explicitamente
+- Ignorar quando o user menciona que tem fotos
+- Fazer perguntas demasiado longas (max 3 perguntas por mensagem)
+
+✅ SEMPRE:
+- Mensagens curtas (2-4 frases)
+- Emojis com moderação
+- Perguntas abertas se user está indeciso
+- Sugestões concretas se pedem ajuda
+
+INFO DO USER:
+• Créditos: {creditos}
+• Modelos: Padrão (1c), Pro (3c), Artístico (2c), Carrossel (N c)
+• Envia fotos → ofereço 3 modelos; envia texto descritivo → ofereço gerar
+• Menu: "Gerar Fotos" (criar do zero) / "Editar Fotos" (enviar foto) / "Carrossel" (série)
+
+SE O USER DISSER ALGO AMBÍGUO, PERGUNTA. NÃO ASSUMAS."""
+
+        messages = [{"role": "system", "content": assistant_prompt}]
         messages.extend(chat_contexts[user_id])
-        
+
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
-            max_tokens=350,
-            temperature=0.7
+            max_tokens=280,
+            temperature=0.8
         )
         resposta = response.choices[0].message.content
         chat_contexts[user_id].append({"role": "assistant", "content": resposta})
-        
+
         return resposta
     except Exception as e:
         logger.error(f"Erro chat: {e}")
@@ -1622,15 +1676,17 @@ def main_keyboard(lang="pt"):
     texts = {
         "pt": ["🎨 Gerar Fotos", "📸 Editar Fotos", "📱 Carrossel", "💳 Créditos", "🛒 Comprar", 
                "📚 Histórico", "⭐ Favoritos", "📊 Stats", "⚙️ Config", 
-               "🎁 Indicar", "❓ Ajuda"],
+               "🎁 Indicar", "❓ Ajuda", "🤖 Assistente IA (grátis)"],
         "en": ["🎨 Generate", "📸 Edit Photos", "📱 Carousel", "💳 Credits", "🛒 Buy", 
                "📚 History", "⭐ Favorites", "📊 Stats", "⚙️ Settings", 
-               "🎁 Refer", "❓ Help"],
+               "🎁 Refer", "❓ Help", "🤖 AI Assistant (free)"],
         "es": ["🎨 Generar", "📸 Editar Fotos", "📱 Carrusel", "💳 Créditos", "🛒 Comprar", 
                "📚 Historial", "⭐ Favoritos", "📊 Stats", "⚙️ Config", 
-               "🎁 Referir", "❓ Ayuda"],
+               "🎁 Referir", "❓ Ayuda", "🤖 Asistente IA (gratis)"],
     }
     t = texts.get(lang, texts["pt"])
+    # BOTAO DESTAQUE: Assistente IA no topo
+    markup.add(telebot.types.InlineKeyboardButton(t[11], callback_data="action_ai_chat"))
     markup.add(
         telebot.types.InlineKeyboardButton(t[0], callback_data="action_create"),
         telebot.types.InlineKeyboardButton(t[1], callback_data="action_edit_photos")
@@ -2221,6 +2277,36 @@ def callback_actions(call):
         }
         bot.send_message(call.message.chat.id, texts.get(lang, texts["pt"]), reply_markup=markup, parse_mode='HTML')
     
+    elif action == "ai_chat":
+        # Ativa modo assistente IA: reseta contexto e mostra intro
+        chat_contexts[user_id] = []
+        intro_texts = {
+            "pt": ("🤖 <b>Assistente IA — Grátis!</b>\n\n"
+                   "Eu sou o teu assistente criativo. Posso ajudar-te a:\n\n"
+                   "✨ <b>Tirar ideias do zero</b> — sem inspiração? Pergunto-te 3 coisas e sugiro\n"
+                   "📸 <b>Preparar uma edição</b> — dizes-me o que queres, eu guio-te passo a passo\n"
+                   "🎨 <b>Escolher o modelo certo</b> — Padrão? Pro? Artístico? Eu explico\n"
+                   "💡 <b>Melhorar um prompt</b> — dás-me a ideia, transformo num prompt top\n\n"
+                   "<i>Escreve no chat qualquer coisa — eu respondo!</i>\n"
+                   "<i>Ex: \"quero um flyer mas estou sem ideias\"</i>"),
+            "en": ("🤖 <b>AI Assistant — Free!</b>\n\n"
+                   "I'm your creative helper. I can:\n\n"
+                   "✨ <b>Give you ideas</b> — stuck? I ask 3 things and suggest\n"
+                   "📸 <b>Prepare an edit</b> — tell me what you want, I guide\n"
+                   "🎨 <b>Choose the right model</b> — Standard? Pro? I explain\n"
+                   "💡 <b>Improve a prompt</b> — rough idea → perfect prompt\n\n"
+                   "<i>Just type anything — I'll reply!</i>"),
+            "es": ("🤖 <b>Asistente IA — ¡Gratis!</b>\n\n"
+                   "Soy tu ayudante creativo. Puedo:\n\n"
+                   "✨ <b>Darte ideas</b> — ¿sin inspiración? Pregunto 3 cosas y sugiero\n"
+                   "📸 <b>Preparar edición</b> — dime qué quieres, yo te guío\n"
+                   "🎨 <b>Elegir modelo</b> — ¿Estándar? ¿Pro? Yo explico\n"
+                   "💡 <b>Mejorar prompt</b> — idea → prompt perfecto\n\n"
+                   "<i>Solo escribe — te respondo!</i>"),
+        }
+        bot.send_message(call.message.chat.id, intro_texts.get(lang, intro_texts["pt"]), parse_mode='HTML')
+        return
+
     elif action == "help":
         texts = {
             "pt": (f"❓ <b>Ajuda - Remake Pixel</b>\n\n"
@@ -5970,26 +6056,8 @@ def handle_create(message):
     
     processar_criacao(message.chat.id, user_id, prompt, lang)
 
-def detect_image_intent(text):
-    """Detecta se o usuário quer gerar uma imagem - MELHORADO"""
-    # Palavras-chave FORTES
-    strong_keywords = ["gera", "gere", "cria", "crie", "faça", "faz", "desenha", "desenhe",
-                       "generate", "create", "make", "draw", "genera", "crea", "dibuja",
-                       "imagem de", "foto de", "image of", "picture of", "imagen de"]
-    
-    text_lower = text.lower()
-    
-    # Se começa com palavra forte
-    for keyword in strong_keywords:
-        if text_lower.startswith(keyword):
-            return True
-    
-    # Se contém imagem/foto E é maior que 10 caracteres
-    if ("imagem" in text_lower or "foto" in text_lower or "image" in text_lower or 
-        "picture" in text_lower or "imagen" in text_lower):
-        if len(text) > 10:
-            return True
-    
+def _legacy_detect_image_intent_DISABLED(text):
+    """DEPRECATED — substituido pela versao conservadora em cima."""
     return False
 
 @bot.message_handler(func=lambda m: True)
@@ -6065,35 +6133,27 @@ def handle_all_messages(message):
         bot.reply_to(message, f"⚠️ Aguarde {wait}s")
         return
     
-    # DETECTAR INTENÇÃO DE GERAÇÃO DE IMAGEM
+    # DETECTAR INTENÇÃO DE GERAÇÃO DE IMAGEM (AI-powered)
+    # Primeiro filtro: keyword conservadora (evita false positives)
     if detect_image_intent(text):
-        # Extrair o que o usuário quer gerar
-        text_clean = text.lower()
-        for prefix in ["gere", "gera", "crie", "cria", "faça", "faz", "desenhe", "desenha", "generate", "create", "make", "draw"]:
-            if text_clean.startswith(prefix):
-                text_clean = text_clean.replace(prefix, "", 1).strip()
-                break
-        
-        for word in ["a imagem de", "uma imagem de", "imagem de", "a foto de", "uma foto de", "foto de", "an image of", "image of", "a picture of", "picture of"]:
-            text_clean = text_clean.replace(word, "").strip()
-        
-        prompt = text_clean if text_clean else text
-        
-        # Verificar créditos
-        creditos = get_user_credits(user_id)
-        if creditos < 1:
-            texts = {"pt": "❌ Créditos insuficientes! Use /start para comprar.", "en": "❌ Insufficient credits! Use /start to buy.", "es": "❌ ¡Créditos insuficientes! Usa /start para comprar."}
-            bot.reply_to(message, texts.get(lang, texts["pt"]))
+        # Pedido DIRETO e explicito detectado. Confirma via AI se deve gerar ja
+        intent_result = classify_user_intent_ai(text, lang)
+        if intent_result.get("intent") == "generate" and intent_result.get("ready_to_generate"):
+            prompt = intent_result.get("clean_prompt") or text
+            creditos = get_user_credits(user_id)
+            if creditos < 1:
+                texts = {"pt": "❌ Créditos insuficientes! Use /start para comprar.",
+                         "en": "❌ Insufficient credits! Use /start to buy.",
+                         "es": "❌ ¡Créditos insuficientes! Usa /start para comprar."}
+                bot.reply_to(message, texts.get(lang, texts["pt"]))
+                return
+            if not use_credit(user_id, 1):
+                return
+            processar_criacao(message.chat.id, user_id, prompt, lang)
             return
-        
-        if not use_credit(user_id, 1):
-            return
-        
-        # GERAR IMAGEM DIRETAMENTE
-        processar_criacao(message.chat.id, user_id, prompt, lang)
-        return
-    
-    # CHAT NORMAL
+        # Se AI diz que nao esta pronto, cai para chat (pede mais detalhes)
+
+    # CHAT NORMAL (IA responde de forma inteligente, pede fotos/ideias quando preciso)
     resposta = get_smart_chat_response(user_id, text, lang)
     bot.reply_to(message, f"🤖 {resposta}")
 
