@@ -2390,13 +2390,24 @@ def callback_gallery(call):
         bot.send_photo(GALLERY_CHANNEL, img_bytes, caption=caption,
                        reply_markup=ikm, parse_mode='HTML')
         _mark_published_gallery(user_id, creation_id)
-        # +2 creditos bonus por publicar (incentivo viral)
-        add_credits(user_id, 2, "gallery_publish")
-        log_system_event("info", "gallery_publish", f"u={user_id} c={creation_id}", user_id)
+
+        # Contador de publicacoes do user + bonus a cada 10 (anti-prejuizo)
+        pub_data = load_json("gallery_publish_count.json")
+        uid = str(user_id)
+        pub_data[uid] = int(pub_data.get(uid, 0)) + 1
+        save_json("gallery_publish_count.json", pub_data, Lock())
+        total_pubs = pub_data[uid]
+
+        bonus_msg = ""
+        if total_pubs % 10 == 0:
+            add_credits(user_id, 2, "gallery_milestone_10")
+            bonus_msg = " +2 créditos bónus 🎁"
+
+        log_system_event("info", "gallery_publish", f"u={user_id} c={creation_id} n={total_pubs}", user_id)
         success_texts = {
-            "pt": "✅ Publicado na galeria! +2 créditos bónus 🎁",
-            "en": "✅ Published! +2 bonus credits 🎁",
-            "es": "✅ ¡Publicado! +2 créditos bonus 🎁"
+            "pt": f"✅ Publicado na galeria! ({total_pubs} total){bonus_msg}",
+            "en": f"✅ Published! ({total_pubs} total){bonus_msg}",
+            "es": f"✅ ¡Publicado! ({total_pubs} total){bonus_msg}"
         }
         bot.answer_callback_query(call.id, success_texts.get(lang, success_texts["pt"]), show_alert=True)
     except Exception as e:
