@@ -2087,25 +2087,32 @@ def callback_actions(call):
         return
 
     elif action == "create":
-        # 🎨 Mostra 6 presets rápidos + opção "Escrever do zero"
+        # Fluxo ULTRA-SIMPLES: só pede o prompt. Modelo default = Snap Fast (Grok).
+        # Se user quiser mudar modelo/estilo/tamanho → ⚙️ Configurações no menu Mais.
         try:
             bot.delete_message(call.message.chat.id, call.message.message_id)
         except Exception:
             pass
+        user_states[user_id] = "simple_create_prompt"
+        # Força default Grok para criação
+        set_user_model_v2(user_id, "snap_fast")
         texts = {
-            "pt": ("🎨 <b>Criar imagem</b>\n"
-                   "━━━━━━━━━━━━━━━━\n\n"
-                   "Escolhe um preset rápido ou escreve o teu próprio prompt:\n\n"
-                   "<i>Os presets aplicam automaticamente o modelo e tamanho ideal.</i>"),
-            "en": ("🎨 <b>Create image</b>\n"
-                   "━━━━━━━━━━━━━━━━\n\n"
-                   "Pick a quick preset or write your own:"),
-            "es": ("🎨 <b>Crear imagen</b>\n"
-                   "━━━━━━━━━━━━━━━━\n\n"
-                   "Elige un preset o escribe el tuyo:"),
+            "pt": ("🎨 <b>Criar imagem</b>\n\n"
+                   "Escreve o que queres gerar:\n\n"
+                   "<i>Ex: <code>gato cyberpunk num telhado à noite</code>\n"
+                   "       <code>retrato realista de uma mulher ruiva</code>\n"
+                   "       <code>paisagem de floresta mágica ao pôr do sol</code></i>\n\n"
+                   "<i>💡 Se mencionares flyer/logo/poster, uso o Smart Designer.\n"
+                   "Para mudar modelo/estilo/tamanho → ⚙️ Mais → Configurações.</i>"),
+            "en": ("🎨 <b>Create image</b>\n\n"
+                   "Write what you want:\n\n"
+                   "<i>Ex: <code>cyberpunk cat on rooftop at night</code></i>"),
+            "es": ("🎨 <b>Crear imagen</b>\n\n"
+                   "Escribe qué quieres generar:\n\n"
+                   "<i>Ej: <code>gato cyberpunk en azotea de noche</code></i>"),
         }
         bot.send_message(call.message.chat.id, texts.get(lang, texts["pt"]),
-                         reply_markup=_presets_keyboard(lang), parse_mode='HTML')
+                         reply_markup=cancel_keyboard(lang), parse_mode='HTML')
         return
 
     elif action == "wizard":
@@ -2189,15 +2196,58 @@ def callback_actions(call):
         bot.edit_message_text(texts.get(lang, texts["pt"]), call.message.chat.id, call.message.message_id, reply_markup=buy_keyboard(lang, user_id=user_id), parse_mode='HTML')
     
     elif action == "settings":
-        settings = get_user_style_settings(user_id)
+        # Painel Configurações — mostra defaults do user (modelo V2, estilos, tamanho)
+        # + acesso a personalidade IA
+        m_key = get_user_model_v2(user_id)
+        m = get_model_v2(m_key)
+        styles = get_user_styles_v2(user_id)
+        styles_str = ", ".join([STYLES_V2[s]["nome"] for s in styles[:3]]) if styles else "—"
+        if len(styles) > 3:
+            styles_str += f" +{len(styles) - 3}"
+        size_key = get_user_size_v2(user_id)
+        size_name = SIZES_V2.get(size_key, {}).get("nome", size_key)
         personality = get_user_personality(user_id)
         pers_info = AI_PERSONALITIES[personality]
+
         texts = {
-            "pt": f"⚙️ <b>Configurações</b>\n\n🎨 Estilo: {settings['visual_style']}\n📐 Formato: {settings['aspect_ratio']}\n🔢 Variações: {settings['num_variations']}\n🤖 IA: {pers_info['emoji']} {pers_info['nome']}\n\nEscolhe:",
-            "en": f"⚙️ <b>Settings</b>\n\n🎨 Style: {settings['visual_style']}\n📐 Format: {settings['aspect_ratio']}\n🔢 Variations: {settings['num_variations']}\n🤖 AI: {pers_info['emoji']} {pers_info['nome']}\n\nChoose:",
-            "es": f"⚙️ <b>Configuración</b>\n\n🎨 Estilo: {settings['visual_style']}\n📐 Formato: {settings['aspect_ratio']}\n🔢 Variaciones: {settings['num_variations']}\n🤖 IA: {pers_info['emoji']} {pers_info['nome']}\n\nElige:"
+            "pt": (f"⚙️ <b>Configurações</b>\n"
+                   f"━━━━━━━━━━━━━━━━\n"
+                   f"🤖 Modelo: {m['nome']} ({m['custo']}c)\n"
+                   f"🎭 Estilos: {styles_str}\n"
+                   f"📐 Tamanho: {size_name}\n"
+                   f"🧠 IA: {pers_info['emoji']} {pers_info['nome']}\n"
+                   f"━━━━━━━━━━━━━━━━\n\n"
+                   f"<i>Estes são os valores usados quando crias imagens. Toca para mudar.</i>"),
+            "en": (f"⚙️ <b>Settings</b>\n"
+                   f"🤖 Model: {m['nome']} ({m['custo']}c)\n"
+                   f"🎭 Styles: {styles_str}\n"
+                   f"📐 Size: {size_name}\n"
+                   f"🧠 AI: {pers_info['emoji']} {pers_info['nome']}"),
+            "es": (f"⚙️ <b>Configuración</b>\n"
+                   f"🤖 Modelo: {m['nome']} ({m['custo']}c)\n"
+                   f"🎭 Estilos: {styles_str}\n"
+                   f"📐 Tamaño: {size_name}\n"
+                   f"🧠 IA: {pers_info['emoji']} {pers_info['nome']}"),
         }
-        bot.edit_message_text(texts.get(lang, texts["pt"]), call.message.chat.id, call.message.message_id, reply_markup=settings_keyboard(lang), parse_mode='HTML')
+        mk = telebot.types.InlineKeyboardMarkup(row_width=2)
+        lbl = {"pt": {"model": "🤖 Mudar modelo", "styles": "🎭 Estilos", "size": "📐 Tamanho",
+                      "pers": "🧠 Personalidade IA", "back": "◀️ Voltar"},
+               "en": {"model": "🤖 Model", "styles": "🎭 Styles", "size": "📐 Size",
+                      "pers": "🧠 AI personality", "back": "◀️ Back"},
+               "es": {"model": "🤖 Modelo", "styles": "🎭 Estilos", "size": "📐 Tamaño",
+                      "pers": "🧠 Personalidad IA", "back": "◀️ Volver"}}.get(lang, None)
+        if lbl is None:
+            lbl = {"model": "🤖 Model", "styles": "🎭 Styles", "size": "📐 Size",
+                   "pers": "🧠 AI", "back": "◀️ Back"}
+        mk.add(
+            telebot.types.InlineKeyboardButton(lbl["model"], callback_data="v2_gen_changemodel"),
+            telebot.types.InlineKeyboardButton(lbl["size"], callback_data="v2_size_menu"),
+        )
+        mk.add(telebot.types.InlineKeyboardButton(lbl["styles"], callback_data="v2_styles_menu"))
+        mk.add(telebot.types.InlineKeyboardButton(lbl["pers"], callback_data="settings_pers"))
+        mk.add(telebot.types.InlineKeyboardButton(lbl["back"], callback_data="action_more"))
+        bot.edit_message_text(texts.get(lang, texts["pt"]), call.message.chat.id,
+                              call.message.message_id, reply_markup=mk, parse_mode='HTML')
     
     elif action == "ai_chat":
         # Ativa modo assistente IA: reseta contexto e mostra intro
@@ -5249,15 +5299,45 @@ def handle_photo(message):
                 Thread(target=delayed_process, args=(user_id, lang, mg_id)).start()
         return
 
-    # Foto única — mostrar painel V2 de edição (Edit Master default, 4c)
+    # Foto única — fluxo ULTRA-SIMPLES: só pede prompt de edição. Usa Edit Master (FLUX).
     pending_photos[user_id] = {
         "file_id": message.photo[-1].file_id,
         "caption": caption,
         "chat_id": message.chat.id,
         "timestamp": time.time()
     }
+    # Força Edit Master (FLUX) para edição — funciona melhor que Grok em image-to-image
+    set_user_model_v2(user_id, "edit_master")
+    # Limpa estilos residuais para não contaminar edição
+    set_user_styles_v2(user_id, [])
 
-    _v2_show_edit_setup_panel(message.chat.id, user_id, lang, num_photos=1)
+    # Se já tem caption >= 3 chars, usa directo
+    if caption and len(caption.strip()) >= 3:
+        allowed, reason, extra = check_user_allowed(user_id, prompt=caption, check_rate=False)
+        if not allowed:
+            pending_photos.pop(user_id, None)
+            bot.reply_to(message, deny_message(lang, reason, extra), parse_mode='HTML')
+            return
+        _v2_execute_edit(message.chat.id, user_id, lang, caption.strip())
+        return
+
+    # Sem caption → pede descrição
+    user_states[user_id] = "v2_awaiting_edit_prompt"
+    edit_texts = {
+        "pt": ("📸 <b>Foto recebida!</b>\n\n"
+               "Descreve a edição que queres fazer:\n\n"
+               "<i>Ex: <code>remove o fundo</code>\n"
+               "       <code>transforma em estilo anime</code>\n"
+               "       <code>muda a cor do cabelo para ruivo</code>\n"
+               "       <code>adiciona óculos escuros e fundo de praia</code></i>\n\n"
+               "<i>💡 Para mudar o modelo → ⚙️ Mais → Configurações.</i>"),
+        "en": ("📸 <b>Photo received!</b>\n\nDescribe the edit:\n\n"
+               "<i>Ex: remove background · transform to anime · change hair color</i>"),
+        "es": ("📸 <b>¡Foto recibida!</b>\n\nDescribe la edición:\n\n"
+               "<i>Ej: quita el fondo · convierte en anime · cambia color del pelo</i>"),
+    }
+    bot.reply_to(message, edit_texts.get(lang, edit_texts["pt"]),
+                 reply_markup=cancel_keyboard(lang), parse_mode='HTML')
 
 # ==================== HANDLERS DE TERMOS ====================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('terms_'))
@@ -5604,26 +5684,168 @@ def callback_preset(call):
                      reply_markup=cancel_keyboard(lang), parse_mode='HTML')
 
 
-@bot.message_handler(func=lambda m: user_states.get(m.from_user.id) == 'awaiting_preset_details')
-def handle_preset_details(message):
-    """Junta detalhes do user ao prompt base do preset e envia para geração."""
+@bot.message_handler(func=lambda m: user_states.get(m.from_user.id) == 'simple_create_prompt')
+def handle_simple_create(message):
+    """Fluxo ULTRA-SIMPLES de criação:
+    1. User escreve prompt
+    2. Se é design (flyer/logo/poster) → oferece Smart Designer
+    3. Se prompt vago (<5 palavras) → AI faz UMA pergunta inteligente
+    4. Senão → gera directo com Snap Fast (Grok)
+    """
     user_id = message.from_user.id
     lang = get_user_lang(user_id)
     user_states.pop(user_id, None)
 
-    details = (message.text or "").strip()
-    is_valid, error = validate_prompt(details)
+    prompt = (message.text or "").strip()
+    is_valid, error = validate_prompt(prompt)
     if not is_valid:
         bot.reply_to(message, f"❌ {error}")
         return
 
-    flow = v2_flows.get(user_id, {})
-    prompt_base = flow.get("prompt_base", "")
-    full_prompt = f"{details}. {prompt_base}" if prompt_base else details
+    # Safety gate
+    allowed, reason, extra = check_user_allowed(user_id, prompt=prompt, check_rate=True)
+    if not allowed:
+        bot.reply_to(message, deny_message(lang, reason, extra), parse_mode='HTML')
+        return
+    if reason == "shadowban":
+        return
 
-    # Usa o pipeline V2 normal
-    v2_flows[user_id] = {"prompt": full_prompt, "source": "preset"}
-    _v2_show_model_confirm(message.chat.id, user_id, lang)
+    # Detecta design → Smart Designer
+    try:
+        intent = classify_user_intent_ai(prompt, lang)
+    except Exception:
+        intent = {"intent": "chat", "ready_to_generate": False, "is_design": False, "clean_prompt": ""}
+
+    # Se é design gráfico → oferece Smart Designer (user confirma)
+    if intent.get("is_design"):
+        sd = MODELS_V2.get("smart_designer")
+        creds = get_user_credits(user_id)
+        v2_flows[user_id] = {"prompt": intent.get("clean_prompt") or prompt,
+                             "model_key": "smart_designer", "source": "simple_create"}
+        user_states[user_id] = "smart_designer_confirm"
+        txt = {
+            "pt": (f"🪄 <b>Isto parece material gráfico!</b>\n\n"
+                   f"Vou usar o <b>Smart Designer</b> (Ideogram V3 — excelente em tipografia).\n"
+                   f"💳 Custo: <b>{sd['custo']}c</b> · Saldo: <code>{creds}</code>\n\n"
+                   f"Ou queres gerar com o modelo normal (3c)?"),
+            "en": (f"🪄 <b>Looks like graphic design!</b>\n\n"
+                   f"I'll use <b>Smart Designer</b>.\n"
+                   f"💳 Cost: {sd['custo']}c · Balance: {creds}\n\n"
+                   f"Or use normal model (3c)?"),
+            "es": (f"🪄 <b>Parece diseño gráfico!</b>\n\n"
+                   f"Usaré <b>Smart Designer</b> (12c)."),
+        }
+        mk = telebot.types.InlineKeyboardMarkup(row_width=2)
+        mk.add(
+            telebot.types.InlineKeyboardButton("✅ Smart Designer (12c)", callback_data="smart_gen_go"),
+            telebot.types.InlineKeyboardButton("⚡ Normal (3c)", callback_data="smart_gen_normal"),
+        )
+        mk.add(telebot.types.InlineKeyboardButton("❌ Cancelar", callback_data="smart_gen_cancel"))
+        bot.reply_to(message, txt.get(lang, txt["pt"]), reply_markup=mk, parse_mode='HTML')
+        return
+
+    # Se prompt vago e AI diz que não está ready → AI faz UMA pergunta
+    word_count = len(prompt.split())
+    if word_count < 5 and not intent.get("ready_to_generate"):
+        # Guarda prompt base e pede mais detalhes
+        v2_flows[user_id] = {"partial_prompt": prompt, "source": "simple_create"}
+        user_states[user_id] = "simple_create_detail"
+        try:
+            # Gera pergunta contextual via GPT
+            q_resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content":
+                     f"You are helping a user create an image on a Telegram bot. "
+                     f"The user wrote a very short/vague prompt: \"{prompt}\". "
+                     f"Ask ONE short smart question (max 15 words) in {lang.upper()} "
+                     f"to clarify style/mood/setting. Output ONLY the question, no extras. "
+                     f"Language PT-PT if pt, EN if en, ES if es."},
+                ],
+                max_tokens=80,
+                temperature=0.5,
+            )
+            question = q_resp.choices[0].message.content.strip().strip('"')
+        except Exception:
+            question = {"pt": "Queres estilo realista ou ilustração? Algum ambiente específico?",
+                        "en": "Realistic or illustration? Any specific mood?",
+                        "es": "¿Realista o ilustración? ¿Algún ambiente?"}.get(lang, "More details?")
+        bot.reply_to(message, f"🤖 {question}", reply_markup=cancel_keyboard(lang))
+        return
+
+    # Prompt OK → gera directo com Snap Fast
+    _simple_generate(message.chat.id, user_id, lang, prompt)
+
+
+@bot.message_handler(func=lambda m: user_states.get(m.from_user.id) == 'simple_create_detail')
+def handle_simple_create_detail(message):
+    """Junta partial_prompt + resposta à pergunta e gera."""
+    user_id = message.from_user.id
+    lang = get_user_lang(user_id)
+    user_states.pop(user_id, None)
+
+    answer = (message.text or "").strip()
+    flow = v2_flows.get(user_id, {})
+    partial = flow.get("partial_prompt", "")
+    combined = f"{partial}, {answer}" if partial and answer else (partial or answer)
+
+    is_valid, error = validate_prompt(combined)
+    if not is_valid:
+        bot.reply_to(message, f"❌ {error}")
+        return
+
+    _simple_generate(message.chat.id, user_id, lang, combined)
+
+
+def _simple_generate(chat_id, user_id, lang, prompt):
+    """Debita créditos e gera directo sem confirm panel.
+    Fallback inteligente: se prompt é NSFW e nsfw_enabled=True, usa FLUX (Creative Flow)
+    em vez de Grok (Snap Fast) porque xAI/Grok tem política própria que bloqueia NSFW.
+    """
+    cfg = get_system_config()
+    flags = get_user_flags(user_id)
+    is_nsfw, _ = check_nsfw_prompt(prompt)
+
+    # Detecta NSFW permitido → força FLUX (aceita disable_safety_checker=True)
+    if is_nsfw and (cfg.get("nsfw_enabled") or flags.get("nsfw_allowed")):
+        model_key = "creative_flow"
+    else:
+        model_key = "snap_fast"
+
+    set_user_model_v2(user_id, model_key)
+    m = MODELS_V2[model_key]
+    if get_user_credits(user_id) < m["custo"]:
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("🛒 Comprar", callback_data="action_buy"))
+        bot.send_message(chat_id,
+                         f"❌ Precisas de {m['custo']} créditos. Saldo: {get_user_credits(user_id)}",
+                         reply_markup=mk)
+        return
+    if not use_credit(user_id, m["custo"]):
+        bot.send_message(chat_id, "❌ Falha ao debitar créditos.")
+        return
+
+    flow = {"prompt": prompt, "source": "simple_create"}
+    v2_flows[user_id] = flow
+    _v2_execute_generation(chat_id, user_id, lang, flow, model_key)
+
+
+@bot.callback_query_handler(func=lambda c: c.data == "smart_gen_normal")
+def callback_smart_fallback_normal(call):
+    """Quando user escolhe gerar com modelo normal em vez do Smart Designer."""
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    flow = v2_flows.get(user_id, {})
+    prompt = flow.get("prompt", "")
+    if not prompt:
+        bot.answer_callback_query(call.id, "Sessão expirada.")
+        return
+    user_states.pop(user_id, None)
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except Exception:
+        pass
+    _simple_generate(call.message.chat.id, user_id, lang, prompt)
 
 
 # ==================== PROMPT ENHANCER (com preview) ====================
@@ -6403,13 +6625,32 @@ def _v2_execute_edit(chat_id, user_id, lang, prompt):
 
 # Helper usado pelo handle_photo para iniciar o fluxo de edição de 2-5 fotos
 def _v2_start_combine_flow(user_id, lang, caption):
-    """Chamado pelo handler de media_group quando o user envia 2-5 fotos."""
+    """Quando user envia 2-5 fotos juntas: pede prompt de combinação directo."""
     try:
         if user_id not in photo_collections:
             return
         photo_collections[user_id]["caption"] = caption or ""
         n = len(photo_collections[user_id].get("photos", []))
-        _v2_show_edit_setup_panel(user_id, user_id, lang, num_photos=n)
+        # Força Edit Master (FLUX) e limpa estilos
+        set_user_model_v2(user_id, "edit_master")
+        set_user_styles_v2(user_id, [])
+        # Se já tem caption suficiente → gera direto
+        if caption and len(caption.strip()) >= 3:
+            _v2_execute_edit(user_id, user_id, lang, caption.strip())
+            return
+        # Pede descrição
+        user_states[user_id] = "v2_awaiting_edit_prompt"
+        txt = {
+            "pt": (f"📸 <b>{n} fotos recebidas!</b>\n\n"
+                   f"Descreve como as queres combinar/editar:\n\n"
+                   f"<i>Ex: <code>junta as pessoas numa só foto</code>\n"
+                   f"       <code>aplica o estilo da foto 1 nas outras</code>\n"
+                   f"       <code>coloca o mesmo fundo em todas</code></i>"),
+            "en": (f"📸 <b>{n} photos received!</b>\n\nDescribe how to combine/edit:"),
+            "es": (f"📸 <b>{n} fotos recibidas!</b>\n\nDescribe cómo combinar/editar:"),
+        }
+        bot.send_message(user_id, txt.get(lang, txt["pt"]),
+                         reply_markup=cancel_keyboard(lang), parse_mode='HTML')
     except Exception as e:
         logger.error(f"Erro _v2_start_combine_flow: {e}")
         photo_collections.pop(user_id, None)
