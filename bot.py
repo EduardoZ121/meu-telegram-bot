@@ -25,6 +25,7 @@ import json
 import stripe
 from openai import OpenAI
 from threading import Lock, Thread
+import threading
 from flask import Flask, request, jsonify
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -798,9 +799,9 @@ def set_user_lang(user_id, lang_code):
 
 # ==================== CRÉDITOS ====================
 PACOTES = {
-    1: {"nome": "Pacote Básico", "creditos": 120, "preco": 500},
-    2: {"nome": "Pacote Médio", "creditos": 350, "preco": 1200},
-    3: {"nome": "Pacote Pro", "creditos": 800, "preco": 2200}
+    1: {"nome": "Pacote Básico", "creditos": 100, "preco": 500},
+    2: {"nome": "Pacote Médio", "creditos": 300, "preco": 1200},
+    3: {"nome": "Pacote Pro", "creditos": 700, "preco": 2200}
 }
 
 def get_user_credits(user_id):
@@ -808,13 +809,13 @@ def get_user_credits(user_id):
     user_id_str = str(user_id)
     if user_id_str not in data:
         data[user_id_str] = {
-            "creditos": 5,
+            "creditos": 15,
             "total_usado": 0,
             "historico": [],
             "created_at": datetime.now().isoformat()
         }
         save_json(CREDITS_FILE, data, CREDITS_LOCK)
-        logger.info(f"Novo usuário {user_id} com 5 créditos")
+        logger.info(f"Novo utilizador {user_id} com 15 créditos")
         
         # 🆕 NOTIFICAÇÃO INSTANTÂNEA
         try:
@@ -1148,9 +1149,21 @@ MODELS_V2 = {
         "prompt_boost": "",
         "editing_only": True,
     },
+    # Modelo "escondido" — só seleccionado automaticamente pelo Assistente IA
+    # quando detecta intent de design gráfico (flyer/panfleto/logo/poster/banner).
+    # Usa Ideogram V3 Turbo (tipografia 90%+ de precisão).
+    "smart_designer": {
+        "nome": "🪄 Smart Designer",
+        "desc": "IA de design gráfico — flyers, logos, panfletos, posters com tipografia",
+        "replicate_id": "ideogram-ai/ideogram-v3-turbo",
+        "custo": 12,
+        "backend": "ideogram",
+        "prompt_boost": "",
+        "hidden": True,  # não aparece no picker normal
+        "designer": True,
+    },
 }
-
-DEFAULT_MODEL_V2 = "creative_flow"
+DEFAULT_MODEL_V2 = "snap_fast"
 
 
 def get_model_v2(key):
@@ -1313,30 +1326,37 @@ def gerar_imagem_modelo(prompt, aspect_ratio="1:1", image_input=None, num_output
 
 
 # ==================== HISTÓRICO ====================
-def add_to_history(user_id, action_type, prompt, image_url, creation_id=None):
+def add_to_history(user_id, action_type, prompt, image_url, creation_id=None, extra=None):
+    """Guarda criação no histórico.
+    `extra` é dict opcional com metadata (model_key, size_key, styles) — usado para Remix.
+    """
     data = load_json(HISTORY_FILE)
     user_id_str = str(user_id)
     if user_id_str not in data:
         data[user_id_str] = []
-    
+
     if not creation_id:
         creation_id = f"creation_{user_id}_{int(time.time())}_{random.randint(1000, 9999)}"
-    
-    data[user_id_str].insert(0, {
+
+    entry = {
         "id": creation_id,
         "type": action_type,
         "prompt": prompt,
         "url": image_url,
         "timestamp": datetime.now().isoformat()
-    })
-    data[user_id_str] = data[user_id_str][:20]
+    }
+    if extra and isinstance(extra, dict):
+        entry["meta"] = extra
+
+    data[user_id_str].insert(0, entry)
+    data[user_id_str] = data[user_id_str][:50]  # aumentado de 20 para 50
     save_json(HISTORY_FILE, data, HISTORY_LOCK)
-    
+
     if action_type == "create":
         update_user_stats(user_id, "total_creations")
     elif action_type == "edit":
         update_user_stats(user_id, "total_edits")
-    
+
     return creation_id
 
 def get_user_history(user_id):
@@ -1514,20 +1534,27 @@ def detect_image_intent(text):
 
 
 def classify_user_intent_ai(text, lang="pt"):
-    """Classifica intent usando AI: 'chat', 'generate', 'edit_help', 'idea_help'.
-    Usa GPT-4o-mini (barato). Retorna dict {intent, reasoning, suggested_prompt}
+    """Classifica intent usando AI. Retorna dict:
+    {intent, ready_to_generate, clean_prompt, is_design}
+    - intent: 'chat' | 'generate' | 'edit_help' | 'idea_help'
+    - is_design: True se user quer flyer/logo/poster/panfleto/banner/cartaz (→ Smart Designer)
     """
     try:
         system = (
-            "You are an intent classifier for a Telegram AI photo bot. "
+            "You are an intent classifier for a Telegram AI image bot. "
             "Classify the user message into ONE of these intents:\n"
-            "- 'chat': casual conversation, greetings, questions about bot\n"
-            "- 'generate': user wants to GENERATE a NEW image from scratch RIGHT NOW with clear description\n"
-            "- 'edit_help': user has photos to edit/merge and needs guidance\n"
+            "- 'chat': casual conversation, greetings, questions about bot, complaints\n"
+            "- 'generate': user gave a detailed description and clearly wants a NEW image NOW\n"
+            "- 'edit_help': user mentions having photos to edit/merge and needs guidance\n"
             "- 'idea_help': user needs creative ideas, is stuck, wants suggestions\n"
-            "Return ONLY valid JSON: {\"intent\": \"...\", \"ready_to_generate\": true/false, \"clean_prompt\": \"...\"}\n"
-            "'ready_to_generate' = true ONLY if user gave a detailed enough description (>5 meaningful words).\n"
-            "'clean_prompt' = extracted visual description in English (empty if not ready)."
+            "- 'design': user wants a flyer, logo, poster, brochure, banner, business card, "
+            "panfleto, cartaz, panfleto, or any graphic design with text/typography\n\n"
+            "Return ONLY valid JSON: "
+            "{\"intent\": \"...\", \"ready_to_generate\": true/false, \"clean_prompt\": \"...\", \"is_design\": true/false}\n"
+            "- 'ready_to_generate' = true ONLY if user gave detailed description (>5 meaningful words) AND is NOT design.\n"
+            "  Design always requires more details (text, colors, style) → ready_to_generate=false initially.\n"
+            "- 'clean_prompt' = visual description in English (empty if not ready).\n"
+            "- 'is_design' = true if intent=='design' OR message mentions graphic design artifacts."
         )
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -1535,16 +1562,21 @@ def classify_user_intent_ai(text, lang="pt"):
                 {"role": "system", "content": system},
                 {"role": "user", "content": text[:500]}
             ],
-            max_tokens=150,
+            max_tokens=200,
             temperature=0.1,
             response_format={"type": "json_object"}
         )
         import json as _json
         result = _json.loads(resp.choices[0].message.content)
+        # Normaliza
+        result.setdefault("intent", "chat")
+        result.setdefault("ready_to_generate", False)
+        result.setdefault("clean_prompt", "")
+        result.setdefault("is_design", False)
         return result
     except Exception as e:
         logger.warning(f"intent classify err: {e}")
-        return {"intent": "chat", "ready_to_generate": False, "clean_prompt": ""}
+        return {"intent": "chat", "ready_to_generate": False, "clean_prompt": "", "is_design": False}
 
 
 def get_smart_chat_response(user_id, message, lang="pt"):
@@ -1566,46 +1598,53 @@ def get_smart_chat_response(user_id, message, lang="pt"):
 
         assistant_prompt = f"""{personality_info['system']}
 
-LÍNGUA: Responde SEMPRE em {lang_names.get(lang, 'Português')}.
+IDIOMA: Responde SEMPRE em {lang_names.get(lang, 'Português')} de Portugal (PT-PT).
+Usa: "tu"/"tens"/"envia-me" (nunca "você"/"me manda"/"tá"). Evita gírias brasileiras.
 
-ÉS O ASSISTENTE CRIATIVO do Remake_Pixel (bot Telegram de edição de fotos IA).
+ÉS O ASSISTENTE CRIATIVO do Remake Pixel — bot Telegram de IA para criar e editar imagens.
 
-🎨 QUANDO O UTILIZADOR ESTÁ SEM IDEIAS:
-- Faz 2-3 perguntas curtas para perceber o estilo dele (moderno/retro, cores, mood)
-- Sugere 3 ideias concretas e diferentes
-- Oferece gerar uma delas (1 crédito)
+━━━━━━━━━━━━━━━━━━━━━━━━━
+🧠 COMO DECIDIR O FLUXO (REGRA CRÍTICA):
 
-📸 QUANDO QUER EDITAR/COMBINAR FOTOS (ex: flyer, juntar 2 pessoas):
-- NÃO gera imagem aleatória! Pede: "Envia-me as fotos aqui no chat (podes enviar 2 a 5 juntas)."
-- Explica: "Depois escolhe 'Modelo Pro' para qualidade máxima ou 'Padrão' para rápido."
-- Se for flyer: pergunta texto/cores/estilo DEPOIS das fotos chegarem.
+1. Se o utilizador descreve algo para CRIAR do zero sem mencionar fotos
+   (ex: "quero um flyer vermelho e branco", "um logo minimalista", "poster evento", "cartaz"):
+   → É CRIAÇÃO. NÃO peças fotos.
+   → Faz 2-3 perguntas curtas: tema/texto a aparecer, estilo (moderno/retro/clean), cores extra.
+   → No fim diz: "Boa, vou preparar. Toca em 🎨 Criar no menu para gerar com o modelo perfeito."
+   → Se for flyer/logo/panfleto/poster/banner/cartaz/cartão → sugere SMART DESIGNER (12c)
+     ("Posso usar o Smart Designer — é o modelo especial para material gráfico com texto").
 
-💡 QUANDO PEDE QUESTIONÁRIO/HELP PARA CRIAR:
-- NÃO gera imagem! Guia passo a passo:
-  1. "Que tipo de imagem? (retrato / paisagem / flyer / arte / outro)"
-  2. "Estilo? (realista / anime / cyberpunk / minimalista / etc)"
-  3. "Cores principais?"
-  4. "Algum elemento obrigatório?"
-- Depois: "Posso gerar agora — confirmas com 'sim'?"
+2. Se o user diz explicitamente "tenho uma foto para editar" / "junta estas fotos" / "muda o fundo desta":
+   → É EDIÇÃO. Pede: "Envia-me a foto (ou 2-5 juntas). Vou mostrar o painel de edição."
 
-🚫 NUNCA:
-- Gerar imagem sem o user confirmar explicitamente
-- Ignorar quando o user menciona que tem fotos
-- Fazer perguntas demasiado longas (max 3 perguntas por mensagem)
+3. Se é ambíguo (ex: "fazer imagem bonita") → pergunta "É para criar do zero ou editar uma foto que tens?"
 
-✅ SEMPRE:
-- Mensagens curtas (2-4 frases)
-- Emojis com moderação
-- Perguntas abertas se user está indeciso
-- Sugestões concretas se pedem ajuda
+4. Se user envia foto com legenda vaga (ex: "aumenta qualidade"): já existe painel automático.
+   Limita-te a dar sugestões de prompt se te perguntarem.
 
-INFO DO USER:
-• Créditos: {creditos}
-• Modelos: Padrão (1c), Pro (3c), Artístico (2c), Carrossel (N c)
-• Envia fotos → ofereço 3 modelos; envia texto descritivo → ofereço gerar
-• Menu: "Gerar Fotos" (criar do zero) / "Editar Fotos" (enviar foto) / "Carrossel" (série)
+━━━━━━━━━━━━━━━━━━━━━━━━━
+🛠️ MODELOS (referência para explicar ao user):
+• ⚡ Snap Fast — 3c — rápido, bom para testes (default de criação)
+• 🎨 Creative Flow — 5c — equilíbrio qualidade/criatividade
+• 🔥 Pro Vision — 7c — detalhe profissional, retratos
+• 💎 Ultra Real — 10c — fotorrealismo máximo
+• ✂️ Edit Master — 4c — edição de fotos (default quando envia foto)
+• 🪄 Smart Designer — 12c — ESPECIAL para flyers/logos/panfletos/posters/banners
+   (modelo oculto, só mencionas quando detectas intent de design gráfico)
 
-SE O USER DISSER ALGO AMBÍGUO, PERGUNTA. NÃO ASSUMAS."""
+Vídeo a partir de foto: 20c (menu → "🎬 Imagem→Vídeo").
+
+━━━━━━━━━━━━━━━━━━━━━━━━━
+💡 REGRAS DE ESTILO:
+• Mensagens curtas (2-4 frases). Emojis com moderação.
+• Se user está sem ideias → 3 sugestões concretas e diferentes.
+• NUNCA inventes uma imagem sem o user confirmar.
+• NUNCA peças fotos se o contexto é claramente criação do zero.
+• Se user se queixa / pede suporte humano → aponta: "Fala com @eduardo_zola para suporte directo."
+
+INFO ACTUAL DO UTILIZADOR:
+• Saldo: {creditos} créditos
+• Idioma: {lang_names.get(lang, 'Português')}"""
 
         messages = [{"role": "system", "content": assistant_prompt}]
         messages.extend(chat_contexts[user_id])
@@ -1672,19 +1711,22 @@ def onboarding_keyboard(lang="pt"):
     return markup
 
 def main_keyboard(lang="pt"):
-    """Menu principal enxuto: 7 botões visíveis + '⚙️ Mais' para secundários."""
+    """Menu principal: 7 botões visíveis + '⚙️ Mais' para secundários."""
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     t = {
         "pt": {"ai": "🤖 Assistente IA", "create": "🎨 Criar", "edit": "📸 Editar",
-               "buy": "🛒 Comprar", "credits": "💳 Créditos", "more": "⚙️  Mais opções  ▾"},
+               "video": "🎬 Vídeo", "buy": "🛒 Comprar", "credits": "💳 Créditos",
+               "more": "⚙️  Mais opções  ▾"},
         "en": {"ai": "🤖 AI Assistant", "create": "🎨 Create", "edit": "📸 Edit",
-               "buy": "🛒 Buy", "credits": "💳 Credits", "more": "⚙️  More  ▾"},
+               "video": "🎬 Video", "buy": "🛒 Buy", "credits": "💳 Credits",
+               "more": "⚙️  More  ▾"},
         "es": {"ai": "🤖 Asistente IA", "create": "🎨 Crear", "edit": "📸 Editar",
-               "buy": "🛒 Comprar", "credits": "💳 Créditos", "more": "⚙️  Más  ▾"},
+               "video": "🎬 Vídeo", "buy": "🛒 Comprar", "credits": "💳 Créditos",
+               "more": "⚙️  Más  ▾"},
     }.get(lang, None)
     if t is None:
         t = {"ai": "🤖 AI Assistant", "create": "🎨 Create", "edit": "📸 Edit",
-             "buy": "🛒 Buy", "credits": "💳 Credits", "more": "⚙️  More  ▾"}
+             "video": "🎬 Video", "buy": "🛒 Buy", "credits": "💳 Credits", "more": "⚙️  More  ▾"}
 
     # Destaque: assistente IA grátis
     markup.add(telebot.types.InlineKeyboardButton(t["ai"], callback_data="action_ai_chat"))
@@ -1693,12 +1735,14 @@ def main_keyboard(lang="pt"):
         telebot.types.InlineKeyboardButton(t["create"], callback_data="action_create"),
         telebot.types.InlineKeyboardButton(t["edit"], callback_data="action_edit_photos")
     )
+    # Vídeo (destaque — feature premium)
+    markup.add(telebot.types.InlineKeyboardButton(t["video"], callback_data="action_video"))
     # Comércio
     markup.add(
         telebot.types.InlineKeyboardButton(t["buy"], callback_data="action_buy"),
         telebot.types.InlineKeyboardButton(t["credits"], callback_data="action_credits")
     )
-    # Submenu "Mais" (secundários escondidos: estilos, histórico, favs, stats, config, indicar, ajuda)
+    # Submenu "Mais"
     markup.add(telebot.types.InlineKeyboardButton(t["more"], callback_data="action_more"))
     return markup
 
@@ -1709,18 +1753,18 @@ def more_keyboard(lang="pt"):
     t = {
         "pt": {"styles": "🎭 Estilos", "history": "📚 Histórico", "favs": "⭐ Favoritos",
                "stats": "📊 Stats", "settings": "⚙️ Configurações", "referral": "🎁 Indicar e ganhar",
-               "help": "❓ Ajuda", "back": "◀️ Voltar ao menu"},
+               "video": "🎬 Vídeo (20c)", "help": "❓ Ajuda", "back": "◀️ Voltar ao menu"},
         "en": {"styles": "🎭 Styles", "history": "📚 History", "favs": "⭐ Favorites",
                "stats": "📊 Stats", "settings": "⚙️ Settings", "referral": "🎁 Refer & earn",
-               "help": "❓ Help", "back": "◀️ Back to menu"},
+               "video": "🎬 Video (20c)", "help": "❓ Help", "back": "◀️ Back to menu"},
         "es": {"styles": "🎭 Estilos", "history": "📚 Historial", "favs": "⭐ Favoritos",
                "stats": "📊 Stats", "settings": "⚙️ Configuración", "referral": "🎁 Referir y ganar",
-               "help": "❓ Ayuda", "back": "◀️ Volver al menú"},
+               "video": "🎬 Vídeo (20c)", "help": "❓ Ayuda", "back": "◀️ Volver al menú"},
     }.get(lang, None)
     if t is None:
         t = {"styles": "🎭 Styles", "history": "📚 History", "favs": "⭐ Favorites",
              "stats": "📊 Stats", "settings": "⚙️ Settings", "referral": "🎁 Refer",
-             "help": "❓ Help", "back": "◀️ Back"}
+             "video": "🎬 Video (20c)", "help": "❓ Help", "back": "◀️ Back"}
     markup.add(
         telebot.types.InlineKeyboardButton(t["styles"], callback_data="v2_styles_menu"),
         telebot.types.InlineKeyboardButton(t["history"], callback_data="action_history")
@@ -1730,10 +1774,13 @@ def more_keyboard(lang="pt"):
         telebot.types.InlineKeyboardButton(t["stats"], callback_data="action_stats")
     )
     markup.add(
-        telebot.types.InlineKeyboardButton(t["settings"], callback_data="action_settings"),
+        telebot.types.InlineKeyboardButton(t["video"], callback_data="action_video"),
         telebot.types.InlineKeyboardButton(t["referral"], callback_data="action_referral")
     )
-    markup.add(telebot.types.InlineKeyboardButton(t["help"], callback_data="action_help"))
+    markup.add(
+        telebot.types.InlineKeyboardButton(t["settings"], callback_data="action_settings"),
+        telebot.types.InlineKeyboardButton(t["help"], callback_data="action_help")
+    )
     markup.add(telebot.types.InlineKeyboardButton(t["back"], callback_data="action_menu"))
     return markup
 
@@ -1743,16 +1790,23 @@ def cancel_keyboard(lang="pt"):
     markup.add(telebot.types.InlineKeyboardButton(texts.get(lang, texts["pt"]), callback_data="action_cancel"))
     return markup
 
-def buy_keyboard(lang="pt"):
+def buy_keyboard(lang="pt", user_id=None):
+    """Teclado de compra. Se user_id não tem histórico de compra, o pacote 1 (5€)
+    mostra +50c bónus de primeira compra.
+    """
     markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+    first_time = bool(user_id) and not _has_ever_purchased(user_id)
     for pid, p in PACOTES.items():
         preco = p['preco'] / 100
-        markup.add(telebot.types.InlineKeyboardButton(
-            f"{pid}️⃣ {p['creditos']} créd (€{preco:.2f})",
-            callback_data=f"buy_{pid}"
-        ))
-    back_texts = {"pt": "◀️ Voltar", "en": "◀️ Back", "es": "◀️ Volver", "fr": "◀️ Retour"}
-    markup.add(telebot.types.InlineKeyboardButton(back_texts.get(lang, back_texts["pt"]), callback_data="action_menu"))
+        bonus = _first_purchase_bonus_credits(pid) if first_time else 0
+        if bonus > 0:
+            label = f"🎁 {pid}️⃣ {p['creditos']}+{bonus} créd (€{preco:.2f}) — 1ª compra!"
+        else:
+            label = f"{pid}️⃣ {p['creditos']} créd (€{preco:.2f})"
+        markup.add(telebot.types.InlineKeyboardButton(label, callback_data=f"buy_{pid}"))
+    back_texts = {"pt": "◀️ Voltar", "en": "◀️ Back", "es": "◀️ Volver"}
+    markup.add(telebot.types.InlineKeyboardButton(back_texts.get(lang, back_texts["pt"]),
+                                                  callback_data="action_menu"))
     return markup
 
 def settings_keyboard(lang="pt"):
@@ -1823,19 +1877,34 @@ def personality_keyboard(lang="pt"):
     return markup
 
 def creation_actions_keyboard(creation_id, lang="pt"):
-    markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-    texts = {
-        "pt": ["⭐ Favoritar", "🔗 Compartilhar", "📢 Publicar na Galeria"],
-        "en": ["⭐ Favorite", "🔗 Share", "📢 Publish to Gallery"],
-        "es": ["⭐ Favorito", "🔗 Compartir", "📢 Publicar en Galería"],
-        "fr": ["⭐ Favori", "🔗 Partager", "📢 Publier à la Galerie"]
-    }
-    t = texts.get(lang, texts["pt"])
+    """Botões pós-geração: remix + social + upscale.
+
+    creation_id é passado em todos os callbacks para identificar a imagem original.
+    """
+    markup = telebot.types.InlineKeyboardMarkup(row_width=3)
+    t = {
+        "pt": {"fav": "⭐ Fav", "share": "🔗 Partilhar", "gallery": "📢 Publicar",
+               "variation": "🔁 Variação", "remix_style": "🎭 Outro estilo", "upscale": "⬆️ Upscale"},
+        "en": {"fav": "⭐ Fav", "share": "🔗 Share", "gallery": "📢 Publish",
+               "variation": "🔁 Variation", "remix_style": "🎭 New style", "upscale": "⬆️ Upscale"},
+        "es": {"fav": "⭐ Fav", "share": "🔗 Compartir", "gallery": "📢 Publicar",
+               "variation": "🔁 Variación", "remix_style": "🎭 Otro estilo", "upscale": "⬆️ Upscale"},
+    }.get(lang, None)
+    if t is None:
+        t = {"fav": "⭐", "share": "🔗", "gallery": "📢",
+             "variation": "🔁", "remix_style": "🎭", "upscale": "⬆️"}
+    # Linha 1 — remix (o que faz MJ ser MJ)
     markup.add(
-        telebot.types.InlineKeyboardButton(t[0], callback_data=f"fav_{creation_id}"),
-        telebot.types.InlineKeyboardButton(t[1], callback_data=f"share_{creation_id}")
+        telebot.types.InlineKeyboardButton(t["variation"], callback_data=f"remix_var_{creation_id}"),
+        telebot.types.InlineKeyboardButton(t["remix_style"], callback_data=f"remix_style_{creation_id}"),
+        telebot.types.InlineKeyboardButton(t["upscale"], callback_data=f"remix_upscale_{creation_id}"),
     )
-    markup.add(telebot.types.InlineKeyboardButton(t[2], callback_data=f"gallery_{creation_id}"))
+    # Linha 2 — social
+    markup.add(
+        telebot.types.InlineKeyboardButton(t["fav"], callback_data=f"fav_{creation_id}"),
+        telebot.types.InlineKeyboardButton(t["share"], callback_data=f"share_{creation_id}"),
+        telebot.types.InlineKeyboardButton(t["gallery"], callback_data=f"gallery_{creation_id}"),
+    )
     return markup
 
 # ==================== HELPERS ====================
@@ -1970,7 +2039,7 @@ def callback_onboarding(call):
         )
         bot.send_message(call.message.chat.id, terms.get(lang, terms["pt"]), reply_markup=markup, parse_mode='HTML')
     else:
-        bot.send_message(call.message.chat.id, "🎨 <b>Bem-vindo ao Remake Pixel!</b>\n\nCrie e edite imagens com IA.\n5 créditos grátis para experimentar!", parse_mode='HTML')
+        bot.send_message(call.message.chat.id, "🎨 <b>Bem-vindo ao Remake Pixel!</b>\n\nCria e edita imagens com IA.\n15 créditos grátis para experimentar!", parse_mode='HTML')
         time.sleep(1)
         set_onboarded(user_id)
         terms = {
@@ -2018,13 +2087,25 @@ def callback_actions(call):
         return
 
     elif action == "create":
-        # 🎨 Fluxo V2 unificado: mostrar SETUP panel (modelo + estilos + tamanho + prompt)
+        # 🎨 Mostra 6 presets rápidos + opção "Escrever do zero"
         try:
             bot.delete_message(call.message.chat.id, call.message.message_id)
         except Exception:
             pass
-        # mostra o painel "setup" antes do prompt
-        _v2_show_setup_panel(call.message.chat.id, user_id, lang)
+        texts = {
+            "pt": ("🎨 <b>Criar imagem</b>\n"
+                   "━━━━━━━━━━━━━━━━\n\n"
+                   "Escolhe um preset rápido ou escreve o teu próprio prompt:\n\n"
+                   "<i>Os presets aplicam automaticamente o modelo e tamanho ideal.</i>"),
+            "en": ("🎨 <b>Create image</b>\n"
+                   "━━━━━━━━━━━━━━━━\n\n"
+                   "Pick a quick preset or write your own:"),
+            "es": ("🎨 <b>Crear imagen</b>\n"
+                   "━━━━━━━━━━━━━━━━\n\n"
+                   "Elige un preset o escribe el tuyo:"),
+        }
+        bot.send_message(call.message.chat.id, texts.get(lang, texts["pt"]),
+                         reply_markup=_presets_keyboard(lang), parse_mode='HTML')
         return
 
     elif action == "wizard":
@@ -2105,7 +2186,7 @@ def callback_actions(call):
             "en": "🛒 <b>Buy credits</b>\n━━━━━━━━━━━━━━━━\n\nChoose a package:",
             "es": "🛒 <b>Comprar créditos</b>\n━━━━━━━━━━━━━━━━\n\nElige un paquete:",
         }
-        bot.edit_message_text(texts.get(lang, texts["pt"]), call.message.chat.id, call.message.message_id, reply_markup=buy_keyboard(lang), parse_mode='HTML')
+        bot.edit_message_text(texts.get(lang, texts["pt"]), call.message.chat.id, call.message.message_id, reply_markup=buy_keyboard(lang, user_id=user_id), parse_mode='HTML')
     
     elif action == "settings":
         settings = get_user_style_settings(user_id)
@@ -2148,55 +2229,83 @@ def callback_actions(call):
         bot.send_message(call.message.chat.id, intro_texts.get(lang, intro_texts["pt"]), parse_mode='HTML')
         return
 
+    elif action == "video":
+        # Entrada pública para Imagem→Vídeo / Texto→Vídeo (20c)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        # Simula a execução do comando /video
+        class _FakeMsg:
+            def __init__(self, chat_id, user_id):
+                self.chat = type('obj', (), {'id': chat_id})()
+                self.from_user = type('obj', (), {'id': user_id})()
+        cmd_video(_FakeMsg(call.message.chat.id, user_id))
+
     elif action == "help":
         texts = {
             "pt": ("❓ <b>Ajuda — Remake Pixel</b>\n"
                    "━━━━━━━━━━━━━━━━\n\n"
                    "<b>🎨 CRIAR IMAGENS</b>\n"
-                   "Menu → <i>Criar</i>. Escolhes modelo, estilo e tamanho, escreves o prompt e geras.\n\n"
+                   "Menu → <i>Criar</i>. Escolhes modelo, estilo e tamanho; escreves prompt; geras.\n\n"
                    "<b>📸 EDITAR FOTOS</b>\n"
-                   "Envia 1–5 fotos. O painel mostra o modelo activo (<b>Edit Master</b> por defeito) e tu escreves a edição.\n\n"
+                   "Envia 1–5 fotos. Painel abre com <b>Edit Master</b> por defeito; descreves a edição.\n\n"
+                   "<b>🎬 VÍDEO (20c)</b>\n"
+                   "Menu → <i>Vídeo</i>. Cria vídeo curto a partir de texto ou de uma imagem.\n\n"
                    "<b>🤖 MODELOS</b>\n"
-                   "• ⚡ Snap Fast — 3c · rápido e simples\n"
-                   "• 🎨 Creative Flow — 5c · equilíbrio (⭐ default)\n"
-                   "• 🔥 Pro Vision — 7c · detalhe profissional\n"
+                   "• ⚡ Snap Fast — 3c · rápido (default criação)\n"
+                   "• 🎨 Creative Flow — 5c · equilibrado\n"
+                   "• 🔥 Pro Vision — 7c · detalhe pro\n"
                    "• 💎 Ultra Real — 10c · realismo máximo\n"
-                   "• ✂️ Edit Master — 4c · edição de fotos\n\n"
+                   "• ✂️ Edit Master — 4c · edição (default foto)\n"
+                   "• 🪄 <i>Smart Designer</i> — 12c · oculto, escolhido pelo Assistente IA para flyers/logos/posters\n\n"
                    "<b>🎭 ESTILOS</b>\n"
-                   "43 estilos (Anime, Cinematic, Ghibli, Cyberpunk, Vintage, Disney…). Podes combinar até 5.\n\n"
-                   "<b>💬 ASSISTENTE IA</b>\n"
-                   "Escreve qualquer coisa no chat — o assistente ajuda a criar prompts. <b>Grátis</b>.\n\n"
+                   "43 estilos (Anime, Cinematic, Ghibli, Cyberpunk, Vintage, Disney…). Combina até 5.\n\n"
+                   "<b>💬 ASSISTENTE IA</b> (grátis)\n"
+                   "Escreve qualquer coisa no chat. Se mencionares flyer/logo/panfleto, ele sugere <i>Smart Designer</i> automaticamente.\n\n"
+                   "<b>💳 PACOTES</b>\n"
+                   "5€ = 100 · 12€ = 300 · 22€ = 700\n\n"
+                   "<b>🎁 GRÁTIS</b>\n"
+                   "• 15 créditos para novos utilizadores\n"
+                   "• +2 créditos a cada 10 publicações na galeria\n"
+                   "• +10 créditos por cada amigo que compre 5€+\n\n"
                    "<b>📋 COMANDOS</b>\n"
                    "/menu · /start · /wizard · /creditos · /idioma · /termos\n\n"
                    "<i>Dúvidas? Toca em Suporte para falar com a IA.</i>"),
             "en": ("❓ <b>Help — Remake Pixel</b>\n"
                    "━━━━━━━━━━━━━━━━\n\n"
-                   "<b>🎨 CREATE</b> — Menu → <i>Create</i>. Pick model, style, size; write prompt; generate.\n\n"
-                   "<b>📸 EDIT</b> — Send 1–5 photos. Panel shows active model (<b>Edit Master</b> by default); describe your edit.\n\n"
+                   "<b>🎨 CREATE</b> — Menu → <i>Create</i>. Pick model/style/size; write; generate.\n\n"
+                   "<b>📸 EDIT</b> — Send 1–5 photos. Panel opens with <b>Edit Master</b>.\n\n"
+                   "<b>🎬 VIDEO (20c)</b> — Menu → <i>Video</i>. Short video from text or image.\n\n"
                    "<b>🤖 MODELS</b>\n"
-                   "• ⚡ Snap Fast — 3c · fast & simple\n"
-                   "• 🎨 Creative Flow — 5c · balanced (⭐ default)\n"
-                   "• 🔥 Pro Vision — 7c · pro detail\n"
-                   "• 💎 Ultra Real — 10c · max realism\n"
-                   "• ✂️ Edit Master — 4c · photo editing\n\n"
-                   "<b>🎭 STYLES</b> — 43 styles, combine up to 5.\n\n"
-                   "<b>💬 AI ASSISTANT</b> — Just type. <b>Free</b>.\n\n"
-                   "<b>📋 COMMANDS</b> — /menu · /start · /wizard · /credits · /lang\n\n"
-                   "<i>Questions? Tap Support to chat with AI.</i>"),
+                   "• ⚡ Snap Fast — 3c (default)\n"
+                   "• 🎨 Creative Flow — 5c\n"
+                   "• 🔥 Pro Vision — 7c\n"
+                   "• 💎 Ultra Real — 10c\n"
+                   "• ✂️ Edit Master — 4c\n"
+                   "• 🪄 <i>Smart Designer</i> — 12c · hidden, auto-picked by AI for flyers/logos\n\n"
+                   "<b>🎭 STYLES</b> — 43, combine up to 5.\n\n"
+                   "<b>💬 AI ASSISTANT</b> (free). Mention flyer/logo → AI suggests Smart Designer.\n\n"
+                   "<b>💳 PACKS</b> — 5€ = 100 · 12€ = 300 · 22€ = 700\n"
+                   "<b>🎁 FREE</b> — 15 credits new users · +2 per 10 gallery posts · +10 per friend who buys 5€+\n\n"
+                   "<b>📋 COMMANDS</b> /menu /start /wizard /credits /lang"),
             "es": ("❓ <b>Ayuda — Remake Pixel</b>\n"
                    "━━━━━━━━━━━━━━━━\n\n"
-                   "<b>🎨 CREAR</b> — Menú → <i>Crear</i>. Elige modelo, estilo, tamaño; escribe prompt; genera.\n\n"
-                   "<b>📸 EDITAR</b> — Envía 1–5 fotos. El panel muestra el modelo activo (<b>Edit Master</b> por defecto).\n\n"
+                   "<b>🎨 CREAR</b> — Menú → <i>Crear</i>. Elige modelo/estilo/tamaño; escribe; genera.\n\n"
+                   "<b>📸 EDITAR</b> — Envía 1–5 fotos. Panel con <b>Edit Master</b>.\n\n"
+                   "<b>🎬 VÍDEO (20c)</b> — Menú → <i>Vídeo</i>. Vídeo corto desde texto o imagen.\n\n"
                    "<b>🤖 MODELOS</b>\n"
-                   "• ⚡ Snap Fast — 3c · rápido y simple\n"
-                   "• 🎨 Creative Flow — 5c · equilibrado (⭐ por defecto)\n"
-                   "• 🔥 Pro Vision — 7c · detalle profesional\n"
-                   "• 💎 Ultra Real — 10c · realismo máximo\n"
-                   "• ✂️ Edit Master — 4c · edición de fotos\n\n"
-                   "<b>🎭 ESTILOS</b> — 43 estilos, combina hasta 5.\n\n"
-                   "<b>💬 ASISTENTE IA</b> — Solo escribe. <b>Gratis</b>.\n\n"
-                   "<b>📋 COMANDOS</b> — /menu · /start · /wizard · /creditos · /idioma\n\n"
-                   "<i>¿Dudas? Toca Soporte para chatear con la IA.</i>"),
+                   "• ⚡ Snap Fast — 3c (por defecto)\n"
+                   "• 🎨 Creative Flow — 5c\n"
+                   "• 🔥 Pro Vision — 7c\n"
+                   "• 💎 Ultra Real — 10c\n"
+                   "• ✂️ Edit Master — 4c\n"
+                   "• 🪄 <i>Smart Designer</i> — 12c · oculto, auto-elegido por IA para flyers/logos\n\n"
+                   "<b>🎭 ESTILOS</b> — 43, combina hasta 5.\n\n"
+                   "<b>💬 ASISTENTE IA</b> (gratis). Menciona flyer/logo → IA sugiere Smart Designer.\n\n"
+                   "<b>💳 PAQUETES</b> — 5€ = 100 · 12€ = 300 · 22€ = 700\n"
+                   "<b>🎁 GRATIS</b> — 15 créditos nuevos · +2 por 10 publicaciones · +10 por amigo que compre 5€+\n\n"
+                   "<b>📋 COMANDOS</b> /menu /start /wizard /creditos /idioma"),
         }
         support_btn = {"pt": "💬 Falar com Suporte IA", "en": "💬 Chat with AI Support", "es": "💬 Hablar con Soporte IA"}.get(lang, "💬 Support")
         back_btn = {"pt": "◀️ Voltar", "en": "◀️ Back", "es": "◀️ Volver"}.get(lang, "◀️ Back")
@@ -2233,7 +2342,7 @@ def callback_actions(call):
             "es": f"🎁 <b>Recomienda amigos y gana creditos!</b>\n\n📊 Tus referências: {total}\n💰 Bonus: +10 creditos cuando tu amigo compre 5EUR+\n\nHaz clic en el boton para compartir:"
         }
         
-        share_text = "Experimenta o Remake Pixel! Cria e edita imagens com IA no Telegram. 5 créditos grátis!"
+        share_text = "Experimenta o Remake Pixel! Cria e edita imagens com IA no Telegram. 15 créditos grátis!"
         share_url = link
         
         markup = telebot.types.InlineKeyboardMarkup(row_width=1)
@@ -3727,7 +3836,30 @@ def cmd_start(message):
                     pass
     
     logger.info(f"User {user_id} iniciou {'(NOVO)' if is_new_user else ''}")
-    
+
+    # Daily login bonus (não para novos — já têm 15c iniciais)
+    if not is_new_user:
+        bonus, streak, is_new_today = _check_daily_login_bonus(user_id)
+        if is_new_today and bonus > 0:
+            lang_pre = get_user_lang(user_id)
+            msg_daily = {
+                "pt": (f"🔥 <b>Login diário #{streak}</b>\n"
+                       f"+{bonus} crédito(s) grátis adicionados!\n"
+                       f"💳 Saldo: <code>{get_user_credits(user_id)}</code>\n"
+                       f"<i>Volta amanhã para mais. Aos 7 dias ganhas bónus de +10.</i>"),
+                "en": (f"🔥 <b>Daily login #{streak}</b>\n"
+                       f"+{bonus} free credit(s)!\n"
+                       f"💳 Balance: <code>{get_user_credits(user_id)}</code>"),
+                "es": (f"🔥 <b>Login diario #{streak}</b>\n"
+                       f"+{bonus} crédito(s) gratis!\n"
+                       f"💳 Saldo: <code>{get_user_credits(user_id)}</code>"),
+            }.get(lang_pre, "")
+            if msg_daily:
+                try:
+                    bot.send_message(message.chat.id, msg_daily, parse_mode='HTML')
+                except Exception:
+                    pass
+
     # /start SEMPRE mostra idioma e onboarding
     bot.send_message(
         message.chat.id, 
@@ -3860,6 +3992,7 @@ def cmd_aceitar(message):
             metadata={
                 'user_id': str(sol['user_id']),
                 'creditos': str(pacote['creditos']),
+                'pacote_id': str(sol.get('pacote_id', '')),
                 'pacote_nome': pacote['nome']
             }
         )
@@ -3944,13 +4077,15 @@ v2_flows = {}  # user_id -> {"step": "...", "prompt": "...", "is_edit": False, "
 
 
 def _v2_model_picker_kb(lang, current=None, for_edit=False):
-    """Mostra modelos V2 com preços. Em criação exclui Edit Master; em edição exclui Snap Fast."""
+    """Mostra modelos V2 no picker. Exclui modelos marcados `hidden` (só via chat IA)."""
     mk = telebot.types.InlineKeyboardMarkup(row_width=1)
     for key, m in MODELS_V2.items():
+        if m.get("hidden"):
+            continue
         if not for_edit and key == "edit_master":
-            continue  # edição dedicada
+            continue
         if for_edit and key == "snap_fast":
-            continue  # Grok não suporta edição bem
+            continue
         marker = " ✓" if key == current else ""
         label = f"{m['nome']} — {m['custo']}c{marker}"
         mk.add(telebot.types.InlineKeyboardButton(label, callback_data=f"v2_pickmodel_{key}"))
@@ -4106,19 +4241,23 @@ def _v2_show_model_confirm(chat_id, user_id, lang):
                f"Confirma para generar la imagen."),
     }
     labels = {
-        "pt": {"go": "✅ Gerar Agora", "model": "🤖 Modelo", "styles": "🎭 Estilos",
+        "pt": {"go": "✅ Gerar Agora", "enhance": "✨ Melhorar prompt com IA",
+               "model": "🤖 Modelo", "styles": "🎭 Estilos",
                "size": "📐 Tamanho", "cancel": "❌ Cancelar"},
-        "en": {"go": "✅ Generate Now", "model": "🤖 Model", "styles": "🎭 Styles",
+        "en": {"go": "✅ Generate Now", "enhance": "✨ Enhance prompt with AI",
+               "model": "🤖 Model", "styles": "🎭 Styles",
                "size": "📐 Size", "cancel": "❌ Cancel"},
-        "es": {"go": "✅ Generar", "model": "🤖 Modelo", "styles": "🎭 Estilos",
+        "es": {"go": "✅ Generar", "enhance": "✨ Mejorar prompt con IA",
+               "model": "🤖 Modelo", "styles": "🎭 Estilos",
                "size": "📐 Tamaño", "cancel": "❌ Cancelar"},
     }.get(lang, None)
     if labels is None:
-        labels = {"go": "✅ Generate", "model": "🤖 Model", "styles": "🎭 Styles",
-                  "size": "📐 Size", "cancel": "❌ Cancel"}
+        labels = {"go": "✅ Generate", "enhance": "✨ Enhance", "model": "🤖 Model",
+                  "styles": "🎭 Styles", "size": "📐 Size", "cancel": "❌ Cancel"}
 
     mk = telebot.types.InlineKeyboardMarkup(row_width=3)
     mk.add(telebot.types.InlineKeyboardButton(labels["go"], callback_data="v2_gen_go"))
+    mk.add(telebot.types.InlineKeyboardButton(labels["enhance"], callback_data="enhance_prompt"))
     mk.add(
         telebot.types.InlineKeyboardButton(labels["model"], callback_data="v2_gen_changemodel"),
         telebot.types.InlineKeyboardButton(labels["styles"], callback_data="v2_styles_menu"),
@@ -4128,7 +4267,7 @@ def _v2_show_model_confirm(chat_id, user_id, lang):
     bot.send_message(chat_id, texts.get(lang, texts["pt"]), reply_markup=mk, parse_mode='HTML')
 
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith('v2_'))
+@bot.callback_query_handler(func=lambda c: c.data.startswith('v2_') and not c.data.startswith('v2_edit_'))
 def callback_v2(call):
     user_id = call.from_user.id
     lang = get_user_lang(user_id)
@@ -4193,6 +4332,11 @@ def callback_v2(call):
         style_key = parts[0]
         page = int(parts[1]) if len(parts) > 1 else 0
         toggle_user_style_v2(user_id, style_key)
+        # Marca session pick de estilos (evita reset automático no próximo painel)
+        if user_id in pending_photos:
+            pending_photos[user_id]["_styles_picked_in_session"] = True
+        if user_id in photo_collections:
+            photo_collections[user_id]["_styles_picked_in_session"] = True
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
                                       reply_markup=_v2_styles_picker_kb(user_id, lang, page))
         return
@@ -4386,6 +4530,15 @@ def _v2_execute_generation(chat_id, user_id, lang, flow, model_key, realism_pres
     # Tamanho (aspect_ratio)
     ar = SIZES_V2[get_user_size_v2(user_id)]["ar"]
 
+    # Loading progressivo em background
+    init_txt = {
+        "pt": f"🎨 <b>{m['nome']}</b> · {m['custo']}c debitados · A preparar...",
+        "en": f"🎨 <b>{m['nome']}</b> · {m['custo']}c used · Preparing...",
+        "es": f"🎨 <b>{m['nome']}</b> · {m['custo']}c usados · Preparando...",
+    }.get(lang, f"🎨 {m['nome']} · preparing...")
+    est = 15 if m["backend"] == "grok" else 30  # Grok ~10s; FLUX/Ideogram ~25-35s
+    loading_msg_id, loading_stop = _progressive_loading(chat_id, init_txt, lang, total_estimate_s=est)
+
     try:
         if m["backend"] == "grok":
             # Grok (xAI) — tenta desativar safety checker. Se o modelo não aceitar
@@ -4396,6 +4549,15 @@ def _v2_execute_generation(chat_id, user_id, lang, flow, model_key, realism_pres
                 "num_outputs": 1,
                 "disable_safety_checker": True,
                 "safety_tolerance": 6,
+            })
+        elif m["backend"] == "ideogram":
+            # Ideogram V3 Turbo — params específicos. Excelente em tipografia (flyers/logos/posters).
+            # style_type=DESIGN optimiza para material gráfico.
+            output = replicate.run(m["replicate_id"], input={
+                "prompt": prompt,
+                "aspect_ratio": ar,
+                "style_type": "DESIGN" if m.get("designer") else "AUTO",
+                "magic_prompt_option": "AUTO",
             })
         else:  # flux
             output = replicate.run(m["replicate_id"], input={
@@ -4413,8 +4575,16 @@ def _v2_execute_generation(chat_id, user_id, lang, flow, model_key, realism_pres
             url = str(output)
 
         img_bytes = requests.get(url, timeout=60).content
-        cid = add_to_history(user_id, "create_v2", prompt[:200], url)
+        cid = add_to_history(user_id, "create_v2", prompt[:200], url,
+                             extra={"model_key": model_key, "size_key": get_user_size_v2(user_id),
+                                    "styles": styles, "source": "create"})
         creds = get_user_credits(user_id)
+
+        loading_stop.set()
+        try:
+            bot.delete_message(chat_id, loading_msg_id)
+        except Exception:
+            pass
 
         caption = (f"✨ <b>{m['nome']}</b>\n"
                    f"📐 {SIZES_V2[get_user_size_v2(user_id)]['nome']} | "
@@ -4425,10 +4595,29 @@ def _v2_execute_generation(chat_id, user_id, lang, flow, model_key, realism_pres
         update_user_stats(user_id, "total_creations")
         log_system_event("info", "v2_gen_ok", f"model={model_key} user={user_id}", user_id)
     except Exception as e:
+        loading_stop.set()
         # refund
         add_credits(user_id, m["custo"], "refund_v2_fail")
         log_system_event("error", "v2_gen_fail", str(e), user_id)
-        bot.send_message(chat_id, f"❌ Erro: {str(e)[:120]}. Créditos reembolsados.")
+        # Mensagem humana com alternativa sugerida
+        err_alt = {
+            "pt": ("⚠️ <b>Servidor ocupado</b>\n\n"
+                   f"O modelo <b>{m['nome']}</b> não respondeu a tempo. Créditos devolvidos.\n\n"
+                   "💡 <i>Sugestões:</i>\n"
+                   "• Tenta daqui a 30 segundos\n"
+                   "• Muda para <b>⚡ Snap Fast</b> (mais rápido e estável)\n"
+                   "• Simplifica o teu prompt"),
+            "en": ("⚠️ <b>Server busy</b>\n\n"
+                   f"Model <b>{m['nome']}</b> timed out. Credits refunded.\n\n"
+                   "💡 Try again in 30s or switch to ⚡ Snap Fast."),
+            "es": ("⚠️ <b>Servidor ocupado</b>\n\n"
+                   f"El modelo <b>{m['nome']}</b> no respondió. Créditos devueltos.\n\n"
+                   "💡 Prueba de nuevo en 30s o usa ⚡ Snap Fast."),
+        }.get(lang, f"⚠️ Error: {str(e)[:100]}. Credits refunded.")
+        try:
+            bot.edit_message_text(err_alt, chat_id, loading_msg_id, parse_mode='HTML')
+        except Exception:
+            bot.send_message(chat_id, err_alt, parse_mode='HTML')
 
     v2_flows.pop(user_id, None)
 
@@ -5081,8 +5270,16 @@ def callback_terms(call):
     except:
         pass
     if action == "accept":
-        bot.send_message(call.message.chat.id, "🎨 <b>Bem-vindo ao Remake Pixel!</b>\n\nSou o seu assistente criativo com IA. Posso gerar imagens do zero, editar fotos, transformar em anime, arte digital e muito mais.\n\nVamos começar!", parse_mode='HTML')
+        bot.send_message(call.message.chat.id,
+                         "🎨 <b>Bem-vindo ao Remake Pixel!</b>\n\n"
+                         "Sou o teu assistente criativo com IA. Posso gerar imagens do zero, "
+                         "editar fotos, criar flyers/logos, transformar em anime e muito mais.",
+                         parse_mode='HTML')
         time.sleep(1)
+        # Onboarding interactivo — primeira geração guiada
+        _show_firstgen_onboarding(call.message.chat.id, user_id, lang)
+        # Também envia o menu principal (resposta fica no ecrã abaixo)
+        time.sleep(0.5)
         show_main_menu(call.message.chat.id, user_id, lang)
     else:
         bot.send_message(call.message.chat.id, "❌ Termos recusados. Envia /start para tentar novamente.")
@@ -5128,6 +5325,7 @@ def callback_quick_approve(call):
             metadata={
                 'user_id': str(sol['user_id']),
                 'creditos': str(pacote['creditos']),
+                'pacote_id': str(sol.get('pacote_id', '')),
                 'pacote_nome': pacote['nome']
             }
         )
@@ -5149,18 +5347,711 @@ def callback_quick_approve(call):
         bot.edit_message_text(f"❌ Erro: {e}", call.message.chat.id, call.message.message_id)
         logger.error(f"Erro quick_approve: {e}")
 
+# ==================== LOADING PROGRESSIVO (UX profissional) ====================
+def _progressive_loading(chat_id, initial_text, lang="pt", total_estimate_s=30):
+    """Inicia uma mensagem com loading progressivo em 4 fases.
+    Retorna (message_id, stop_event). Chamar stop_event.set() quando acabar.
+    A mensagem actualiza sozinha em background.
+    """
+    stop = threading.Event()
+    msg = bot.send_message(chat_id, initial_text, parse_mode='HTML')
+
+    phases = {
+        "pt": [
+            ("🎨 A preparar...", 0),
+            ("🧠 A compor a imagem...", 6),
+            ("✨ A aplicar detalhes...", 15),
+            ("⏳ Quase pronto...", int(total_estimate_s * 0.75)),
+        ],
+        "en": [
+            ("🎨 Preparing...", 0),
+            ("🧠 Composing...", 6),
+            ("✨ Adding details...", 15),
+            ("⏳ Almost ready...", int(total_estimate_s * 0.75)),
+        ],
+        "es": [
+            ("🎨 Preparando...", 0),
+            ("🧠 Componiendo...", 6),
+            ("✨ Añadiendo detalles...", 15),
+            ("⏳ Casi listo...", int(total_estimate_s * 0.75)),
+        ],
+    }.get(lang, None) or [("🎨 Processing...", 0), ("⏳ Almost...", 15)]
+
+    def updater():
+        start = time.time()
+        phase_idx = 0
+        while not stop.is_set():
+            elapsed = time.time() - start
+            # Avança de fase se o tempo passou
+            if phase_idx + 1 < len(phases) and elapsed >= phases[phase_idx + 1][1]:
+                phase_idx += 1
+                try:
+                    bot.edit_message_text(phases[phase_idx][0], chat_id, msg.message_id,
+                                          parse_mode='HTML')
+                except Exception:
+                    pass
+            stop.wait(2)
+
+    t = threading.Thread(target=updater, daemon=True)
+    t.start()
+    return msg.message_id, stop
+
+
+# ==================== DAILY LOGIN STREAK ====================
+DAILY_LOGIN_FILE = "daily_login.json"
+DAILY_LOGIN_LOCK = threading.Lock()
+
+def _check_daily_login_bonus(user_id):
+    """Regista login diário e entrega bónus:
+    - +1 crédito por dia (primeira vez no dia)
+    - +10 créditos bónus ao completar 7 dias seguidos
+    Retorna (bonus_credits, streak, is_new_today).
+    """
+    try:
+        data = load_json(DAILY_LOGIN_FILE)
+        uid = str(user_id)
+        today = datetime.now().date().isoformat()
+        rec = data.get(uid, {})
+        last = rec.get("last_login_date")
+        streak = int(rec.get("streak", 0))
+
+        if last == today:
+            return (0, streak, False)  # já recebeu hoje
+
+        # Verifica continuidade (ontem?)
+        yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
+        if last == yesterday:
+            streak += 1
+        else:
+            streak = 1
+
+        bonus = 1
+        if streak >= 7 and streak % 7 == 0:
+            bonus += 10  # bónus semanal
+
+        data[uid] = {"last_login_date": today, "streak": streak,
+                     "total_bonuses": rec.get("total_bonuses", 0) + bonus}
+        save_json(DAILY_LOGIN_FILE, data, DAILY_LOGIN_LOCK)
+
+        add_credits(user_id, bonus, f"daily_login_d{streak}")
+        return (bonus, streak, True)
+    except Exception as e:
+        logger.error(f"daily login err: {e}")
+        return (0, 0, False)
+
+
+# ==================== FIRST-PURCHASE OFFER ====================
+def _has_ever_purchased(user_id):
+    """Verifica se utilizador já comprou algum pacote (pelo histórico de créditos)."""
+    try:
+        data = load_json(CREDITS_FILE)
+        hist = data.get(str(user_id), {}).get("historico", [])
+        for h in hist:
+            if "stripe" in str(h.get("tipo", "")).lower():
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def _first_purchase_bonus_credits(pacote_id):
+    """Retorna créditos bónus da primeira compra. Pacote 1 (5€) ganha +50."""
+    if pacote_id == 1:
+        return 50
+    return 0
+
+
+# ==================== RATE-LIMIT VÍDEO ====================
+_video_last_gen = {}  # user_id → timestamp
+
+def _video_rate_limit_ok(user_id, cooldown=60):
+    """True se podem gerar vídeo. False se ainda em cooldown."""
+    if is_super_admin(user_id):
+        return True
+    now = time.time()
+    last = _video_last_gen.get(user_id, 0)
+    if now - last < cooldown:
+        return False
+    _video_last_gen[user_id] = now
+    return True
+
+
+def _video_rate_limit_remaining(user_id, cooldown=60):
+    """Segundos restantes até próximo vídeo permitido."""
+    now = time.time()
+    last = _video_last_gen.get(user_id, 0)
+    return max(0, int(cooldown - (now - last)))
+
+
+# ==================== PRESETS DE PROMPT ====================
+# 6 presets rápidos para novos utilizadores / pedidos comuns
+PROMPT_PRESETS = {
+    "linkedin": {
+        "nome": "📷 Retrato LinkedIn",
+        "desc": "Foto profissional de perfil",
+        "model": "pro_vision",
+        "size": "portrait",
+        "prompt_base": "professional corporate portrait, neutral office background, soft studio lighting, natural expression, business attire, confident pose, high detail, sharp focus",
+    },
+    "spotify": {
+        "nome": "🎵 Capa Spotify",
+        "desc": "Artwork de álbum/playlist 1:1",
+        "model": "creative_flow",
+        "size": "square",
+        "prompt_base": "album cover art, bold graphic composition, atmospheric mood, vibrant color palette, artistic style, high quality",
+    },
+    "youtube_thumb": {
+        "nome": "📺 Thumbnail YouTube",
+        "desc": "Miniatura impactante 16:9",
+        "model": "creative_flow",
+        "size": "landscape",
+        "prompt_base": "YouTube thumbnail, bold composition, high contrast colors, dramatic lighting, expressive, attention grabbing, cinematic",
+    },
+    "instagram": {
+        "nome": "📱 Post Instagram",
+        "desc": "Post quadrado vibrante",
+        "model": "creative_flow",
+        "size": "square",
+        "prompt_base": "Instagram aesthetic, trendy composition, natural lighting, vibrant colors, beautiful, engaging",
+    },
+    "event_poster": {
+        "nome": "🎫 Cartaz Evento",
+        "desc": "Flyer com texto (Smart Designer)",
+        "model": "smart_designer",
+        "size": "portrait",
+        "prompt_base": "event poster design, large title text, modern graphic layout, eye catching",
+    },
+    "simple_logo": {
+        "nome": "🏢 Logo simples",
+        "desc": "Logo minimalista (Smart Designer)",
+        "model": "smart_designer",
+        "size": "square",
+        "prompt_base": "minimalist logo design, clean vector style, professional brand identity, bold typography",
+    },
+}
+
+
+def _presets_keyboard(lang="pt"):
+    """Teclado com os 6 presets + 'Escrever do zero'."""
+    mk = telebot.types.InlineKeyboardMarkup(row_width=2)
+    pairs = list(PROMPT_PRESETS.items())
+    for i in range(0, len(pairs), 2):
+        row = []
+        for k, p in pairs[i:i + 2]:
+            row.append(telebot.types.InlineKeyboardButton(p["nome"], callback_data=f"preset_{k}"))
+        mk.row(*row)
+    scratch = {"pt": "✏️ Escrever do zero", "en": "✏️ Write from scratch",
+               "es": "✏️ Escribir desde cero"}.get(lang, "✏️ Custom")
+    mk.add(telebot.types.InlineKeyboardButton(scratch, callback_data="preset_custom"))
+    back = {"pt": "◀️ Voltar ao menu", "en": "◀️ Back", "es": "◀️ Volver"}.get(lang, "Back")
+    mk.add(telebot.types.InlineKeyboardButton(back, callback_data="action_menu"))
+    return mk
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('preset_'))
+def callback_preset(call):
+    """Handler dos presets de prompt. Aplica modelo+tamanho+prompt base e abre editor."""
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    key = call.data.replace("preset_", "")
+
+    if key == "custom":
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        _v2_show_setup_panel(call.message.chat.id, user_id, lang)
+        return
+
+    preset = PROMPT_PRESETS.get(key)
+    if not preset:
+        bot.answer_callback_query(call.id, "Preset inválido.")
+        return
+
+    # Aplica modelo + tamanho
+    if preset["model"] in MODELS_V2:
+        set_user_model_v2(user_id, preset["model"])
+    if preset["size"] in SIZES_V2:
+        set_user_size_v2(user_id, preset["size"])
+
+    # Guarda prompt base e pede detalhes ao user
+    v2_flows[user_id] = {"prompt_base": preset["prompt_base"], "preset_key": key}
+    user_states[user_id] = "awaiting_preset_details"
+
+    texts = {
+        "pt": (f"🎫 <b>{preset['nome']}</b>\n"
+               f"<i>{preset['desc']}</i>\n\n"
+               f"Agora diz-me os detalhes que queres destacar:\n\n"
+               f"<i>Ex:</i>\n"
+               f"• <code>mulher 30 anos, cabelo castanho, sorriso</code>\n"
+               f"• <code>festa Halloween dia 31, vermelho e preto</code>\n"
+               f"• <code>startup tech, cores azul e roxo</code>\n\n"
+               f"<i>Vou juntar os teus detalhes ao estilo do preset e gerar.</i>"),
+        "en": (f"🎫 <b>{preset['nome']}</b>\n"
+               f"<i>{preset['desc']}</i>\n\n"
+               f"Now tell me the specific details:\n\n"
+               f"<i>Ex: woman 30, brown hair, smiling</i>"),
+        "es": (f"🎫 <b>{preset['nome']}</b>\n"
+               f"<i>{preset['desc']}</i>\n\n"
+               f"Cuéntame los detalles:\n\n"
+               f"<i>Ej: mujer 30 años, pelo castaño, sonrisa</i>"),
+    }
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except Exception:
+        pass
+    bot.send_message(call.message.chat.id, texts.get(lang, texts["pt"]),
+                     reply_markup=cancel_keyboard(lang), parse_mode='HTML')
+
+
+@bot.message_handler(func=lambda m: user_states.get(m.from_user.id) == 'awaiting_preset_details')
+def handle_preset_details(message):
+    """Junta detalhes do user ao prompt base do preset e envia para geração."""
+    user_id = message.from_user.id
+    lang = get_user_lang(user_id)
+    user_states.pop(user_id, None)
+
+    details = (message.text or "").strip()
+    is_valid, error = validate_prompt(details)
+    if not is_valid:
+        bot.reply_to(message, f"❌ {error}")
+        return
+
+    flow = v2_flows.get(user_id, {})
+    prompt_base = flow.get("prompt_base", "")
+    full_prompt = f"{details}. {prompt_base}" if prompt_base else details
+
+    # Usa o pipeline V2 normal
+    v2_flows[user_id] = {"prompt": full_prompt, "source": "preset"}
+    _v2_show_model_confirm(message.chat.id, user_id, lang)
+
+
+# ==================== PROMPT ENHANCER (com preview) ====================
+@bot.callback_query_handler(func=lambda c: c.data == "enhance_prompt")
+def callback_enhance_prompt(call):
+    """Melhora prompt do flow actual com GPT e mostra comparação."""
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    flow = v2_flows.get(user_id, {})
+    original = flow.get("prompt", "").strip()
+
+    if not original:
+        bot.answer_callback_query(call.id, "Sem prompt activo.")
+        return
+
+    bot.answer_callback_query(call.id, "✨ A melhorar com IA...")
+    try:
+        enhanced = improve_prompt_auto(original)
+    except Exception:
+        enhanced = original
+
+    flow["prompt_enhanced"] = enhanced
+    v2_flows[user_id] = flow
+
+    texts = {
+        "pt": (f"✨ <b>Prompt melhorado com IA</b>\n"
+               f"━━━━━━━━━━━━━━━━\n\n"
+               f"<b>Teu:</b>\n<i>{original[:300]}</i>\n\n"
+               f"<b>Melhorado:</b>\n<code>{enhanced[:500]}</code>\n\n"
+               f"Qual queres usar?"),
+        "en": (f"✨ <b>AI-enhanced prompt</b>\n"
+               f"━━━━━━━━━━━━━━━━\n\n"
+               f"<b>Yours:</b>\n<i>{original[:300]}</i>\n\n"
+               f"<b>Enhanced:</b>\n<code>{enhanced[:500]}</code>\n\n"
+               f"Which to use?"),
+        "es": (f"✨ <b>Prompt mejorado con IA</b>\n"
+               f"━━━━━━━━━━━━━━━━\n\n"
+               f"<b>Tuyo:</b>\n<i>{original[:300]}</i>\n\n"
+               f"<b>Mejorado:</b>\n<code>{enhanced[:500]}</code>\n\n"
+               f"¿Cuál usar?"),
+    }
+    mk = telebot.types.InlineKeyboardMarkup(row_width=2)
+    use_enh = {"pt": "✨ Usar melhorado", "en": "✨ Use enhanced", "es": "✨ Usar mejorado"}.get(lang, "Enhanced")
+    use_orig = {"pt": "📝 Ficar com o meu", "en": "📝 Keep mine", "es": "📝 Quedarme con mío"}.get(lang, "Keep mine")
+    mk.add(
+        telebot.types.InlineKeyboardButton(use_enh, callback_data="enhance_use"),
+        telebot.types.InlineKeyboardButton(use_orig, callback_data="enhance_keep"),
+    )
+    try:
+        bot.edit_message_text(texts.get(lang, texts["pt"]), call.message.chat.id,
+                              call.message.message_id, reply_markup=mk, parse_mode='HTML')
+    except Exception:
+        bot.send_message(call.message.chat.id, texts.get(lang, texts["pt"]),
+                         reply_markup=mk, parse_mode='HTML')
+
+
+@bot.callback_query_handler(func=lambda c: c.data in ("enhance_use", "enhance_keep"))
+def callback_enhance_decision(call):
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    flow = v2_flows.get(user_id, {})
+
+    if call.data == "enhance_use":
+        flow["prompt"] = flow.get("prompt_enhanced", flow.get("prompt", ""))
+        bot.answer_callback_query(call.id, "✨ A usar prompt melhorado")
+    else:
+        bot.answer_callback_query(call.id, "📝 A manter o teu")
+
+    flow.pop("prompt_enhanced", None)
+    v2_flows[user_id] = flow
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except Exception:
+        pass
+    _v2_show_model_confirm(call.message.chat.id, user_id, lang)
+
+
+# ==================== REMIX & UPSCALE (pós-geração) ====================
+@bot.callback_query_handler(func=lambda c: c.data.startswith('remix_'))
+def callback_remix(call):
+    """Handler unificado para remix variação / mudar estilo / upscale 2x."""
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    parts = call.data.split("_", 2)
+    if len(parts) < 3:
+        bot.answer_callback_query(call.id, "Inválido.")
+        return
+    mode, creation_id = parts[1], parts[2]
+    creation = get_creation_by_id(user_id, creation_id)
+    if not creation:
+        bot.answer_callback_query(call.id, "❌ Imagem expirou do histórico.")
+        return
+
+    if mode == "var":
+        # Nova variação do mesmo prompt/modelo
+        meta = creation.get("meta", {})
+        model_key = meta.get("model_key", get_user_model_v2(user_id))
+        if model_key not in MODELS_V2:
+            model_key = DEFAULT_MODEL_V2
+        size_key = meta.get("size_key", "square")
+        if size_key in SIZES_V2:
+            set_user_size_v2(user_id, size_key)
+        set_user_model_v2(user_id, model_key)
+        v2_flows[user_id] = {"prompt": creation.get("prompt", ""), "source": "remix_var"}
+        bot.answer_callback_query(call.id, "🔁 A preparar nova variação...")
+        _v2_show_model_confirm(call.message.chat.id, user_id, lang)
+        return
+
+    if mode == "style":
+        # Muda estilo: abre picker de estilos
+        v2_flows[user_id] = {"prompt": creation.get("prompt", ""), "source": "remix_style"}
+        set_user_styles_v2(user_id, [])  # limpa e deixa user escolher novo
+        # abre o picker
+        try:
+            bot.send_message(call.message.chat.id,
+                             {"pt": "🎭 <b>Escolhe o estilo para remix:</b>",
+                              "en": "🎭 <b>Pick style for remix:</b>",
+                              "es": "🎭 <b>Elige estilo para remix:</b>"}.get(lang, "Styles:"),
+                             reply_markup=_v2_styles_picker_kb(user_id, lang, 0),
+                             parse_mode='HTML')
+        except Exception:
+            pass
+        bot.answer_callback_query(call.id, "🎭 Escolhe um estilo e toca Confirmar")
+        return
+
+    if mode == "upscale":
+        _upscale_menu(call, creation_id, creation)
+        return
+
+
+def _upscale_menu(call, creation_id, creation):
+    """Mostra opções de upscale 2× (3c) e 4× (8c)."""
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    creds = get_user_credits(user_id)
+
+    mk = telebot.types.InlineKeyboardMarkup(row_width=1)
+    lbl2 = {"pt": "⬆️ 2× (3 créditos)", "en": "⬆️ 2× (3 credits)", "es": "⬆️ 2× (3 créditos)"}.get(lang)
+    lbl4 = {"pt": "⬆️⬆️ 4× (8 créditos)", "en": "⬆️⬆️ 4× (8 credits)", "es": "⬆️⬆️ 4× (8 créditos)"}.get(lang)
+    cancel = {"pt": "❌ Cancelar", "en": "❌ Cancel", "es": "❌ Cancelar"}.get(lang)
+    mk.add(telebot.types.InlineKeyboardButton(lbl2, callback_data=f"ups_2_{creation_id}"))
+    mk.add(telebot.types.InlineKeyboardButton(lbl4, callback_data=f"ups_4_{creation_id}"))
+    mk.add(telebot.types.InlineKeyboardButton(cancel, callback_data="ups_cancel"))
+
+    txt = {
+        "pt": f"⬆️ <b>Upscale</b>\nAumenta a resolução da imagem.\n💳 Saldo: <code>{creds}</code>\n\nEscolhe o nível:",
+        "en": f"⬆️ <b>Upscale</b>\nIncrease image resolution.\n💳 Balance: <code>{creds}</code>\n\nPick level:",
+        "es": f"⬆️ <b>Upscale</b>\nAumenta resolución.\n💳 Saldo: <code>{creds}</code>\n\nElige nivel:",
+    }.get(lang)
+    bot.send_message(call.message.chat.id, txt, reply_markup=mk, parse_mode='HTML')
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('ups_'))
+def callback_upscale(call):
+    """Executa upscale via Real-ESRGAN (Replicate)."""
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+
+    if call.data == "ups_cancel":
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        return
+
+    parts = call.data.split("_", 2)
+    if len(parts) < 3:
+        bot.answer_callback_query(call.id, "Inválido.")
+        return
+    level = parts[1]  # '2' ou '4'
+    creation_id = parts[2]
+    creation = get_creation_by_id(user_id, creation_id)
+    if not creation:
+        bot.answer_callback_query(call.id, "❌ Imagem expirou.")
+        return
+
+    cost = 3 if level == "2" else 8
+    scale = 2 if level == "2" else 4
+
+    if get_user_credits(user_id) < cost:
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("🛒 Comprar", callback_data="action_buy"))
+        bot.edit_message_text(
+            f"❌ Precisas de {cost} créditos.",
+            call.message.chat.id, call.message.message_id, reply_markup=mk
+        )
+        return
+    if not use_credit(user_id, cost):
+        bot.answer_callback_query(call.id, "Erro ao debitar.")
+        return
+
+    try:
+        bot.edit_message_text(f"⬆️ A aumentar {scale}× ({cost}c debitados)...",
+                              call.message.chat.id, call.message.message_id)
+    except Exception:
+        pass
+
+    msg_id, stop_ev = _progressive_loading(call.message.chat.id,
+                                           f"⬆️ A aumentar {scale}×...", lang, total_estimate_s=20)
+    try:
+        output = replicate.run(
+            "nightmareai/real-esrgan:f121d640bd286e1fdc67f9799164c1d5be36ff74576ee11c803ae5b665dd46aa",
+            input={"image": creation["url"], "scale": scale, "face_enhance": False}
+        )
+        stop_ev.set()
+        if isinstance(output, list) and output:
+            up_url = str(output[0])
+        elif hasattr(output, "url"):
+            up_url = str(output.url)
+        else:
+            up_url = str(output)
+
+        up_bytes = requests.get(up_url, timeout=90).content
+        new_cid = add_to_history(user_id, "upscale", f"upscale_{scale}x", up_url,
+                                 extra={"source": "upscale", "parent_id": creation_id, "scale": scale})
+        creds_left = get_user_credits(user_id)
+        try:
+            bot.delete_message(call.message.chat.id, msg_id)
+        except Exception:
+            pass
+        caption = (f"⬆️ <b>Upscale {scale}×</b> concluído\n💳 {creds_left} créditos restantes")
+        bot.send_photo(call.message.chat.id, up_bytes, caption=caption,
+                       reply_markup=creation_actions_keyboard(new_cid, lang), parse_mode='HTML')
+    except Exception as e:
+        stop_ev.set()
+        add_credits(user_id, cost, "refund_upscale")
+        try:
+            bot.edit_message_text("⚠️ Upscale falhou. Créditos devolvidos.",
+                                  call.message.chat.id, msg_id)
+        except Exception:
+            pass
+        logger.error(f"upscale fail: {e}")
+
+
+# ==================== ONBOARDING — PRIMEIRA GERAÇÃO GUIADA ====================
+ONBOARDING_FIRSTGEN_PROMPTS = [
+    {"emoji": "🌅", "nome_pt": "Paisagem fantasia", "nome_en": "Fantasy landscape", "nome_es": "Paisaje fantasía",
+     "prompt": "breathtaking fantasy landscape with floating islands, magical waterfalls, golden hour lighting, epic scale, cinematic, ultra detailed"},
+    {"emoji": "🎨", "nome_pt": "Retrato artístico", "nome_en": "Artistic portrait", "nome_es": "Retrato artístico",
+     "prompt": "artistic portrait of a young person, colorful paint splashes around, studio lighting, expressive eyes, creative composition, masterpiece"},
+    {"emoji": "🤖", "nome_pt": "Robot futurista", "nome_en": "Futuristic robot", "nome_es": "Robot futurista",
+     "prompt": "futuristic sleek humanoid robot, neon accents, sci-fi environment, cinematic lighting, ultra detailed, 8k"},
+    {"emoji": "🐉", "nome_pt": "Dragão épico", "nome_en": "Epic dragon", "nome_es": "Dragón épico",
+     "prompt": "majestic ancient dragon perched on a cliff at sunset, dramatic clouds, fantasy art, highly detailed scales, cinematic"},
+]
+
+
+def _show_firstgen_onboarding(chat_id, user_id, lang):
+    """Depois do onboarding, oferece 4 sugestões pré-feitas para primeira geração."""
+    texts = {
+        "pt": ("🎁 <b>Tens 15 créditos grátis!</b>\n"
+               "━━━━━━━━━━━━━━━━\n\n"
+               "Vamos fazer a tua primeira imagem? Escolhe uma das sugestões abaixo ou toca em 🎨 Criar para escrever o teu prompt.\n\n"
+               "<i>Qualquer sugestão gera com Snap Fast (3c) — dá para 5 tentativas com os créditos grátis.</i>"),
+        "en": ("🎁 <b>You have 15 free credits!</b>\n"
+               "━━━━━━━━━━━━━━━━\n\n"
+               "Let's make your first image? Pick one below or tap 🎨 Create for a custom prompt.\n\n"
+               "<i>Each suggestion uses Snap Fast (3c) — 5 tries with free credits.</i>"),
+        "es": ("🎁 <b>¡Tienes 15 créditos gratis!</b>\n"
+               "━━━━━━━━━━━━━━━━\n\n"
+               "¿Hacemos tu primera imagen? Elige una sugerencia o toca 🎨 Crear.\n\n"
+               "<i>Cada sugerencia usa Snap Fast (3c).</i>"),
+    }
+    mk = telebot.types.InlineKeyboardMarkup(row_width=2)
+    for i, item in enumerate(ONBOARDING_FIRSTGEN_PROMPTS):
+        name_key = f"nome_{lang}" if f"nome_{lang}" in item else "nome_pt"
+        mk.add(telebot.types.InlineKeyboardButton(
+            f"{item['emoji']} {item[name_key]}",
+            callback_data=f"firstgen_{i}"
+        ))
+    custom_btn = {"pt": "🎨 Criar o meu próprio", "en": "🎨 My own", "es": "🎨 Mi propio"}.get(lang, "Custom")
+    mk.add(telebot.types.InlineKeyboardButton(custom_btn, callback_data="action_create"))
+    bot.send_message(chat_id, texts.get(lang, texts["pt"]),
+                     reply_markup=mk, parse_mode='HTML')
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('firstgen_'))
+def callback_firstgen(call):
+    """Executa uma das sugestões de onboarding usando Snap Fast."""
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    try:
+        idx = int(call.data.replace("firstgen_", ""))
+    except ValueError:
+        return
+    if idx < 0 or idx >= len(ONBOARDING_FIRSTGEN_PROMPTS):
+        return
+
+    item = ONBOARDING_FIRSTGEN_PROMPTS[idx]
+    set_user_model_v2(user_id, "snap_fast")
+    set_user_styles_v2(user_id, [])
+    flow = {"prompt": item["prompt"], "source": "onboarding_firstgen"}
+    v2_flows[user_id] = flow
+
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except Exception:
+        pass
+
+    # Verifica créditos + débito antes de gerar
+    m = MODELS_V2["snap_fast"]
+    if get_user_credits(user_id) < m["custo"]:
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("🛒 Comprar", callback_data="action_buy"))
+        bot.send_message(call.message.chat.id,
+                         f"❌ Precisas de {m['custo']} créditos. Saldo: {get_user_credits(user_id)}",
+                         reply_markup=mk)
+        return
+    if not use_credit(user_id, m["custo"]):
+        return
+
+    # Gera directo (UX fluida para primeira vez)
+    _v2_execute_generation(call.message.chat.id, user_id, lang, flow, "snap_fast")
+
+
+# ==================== V2 — SMART DESIGNER (modelo oculto via chat IA) ====================
+@bot.callback_query_handler(func=lambda c: c.data in ("smart_gen_go", "smart_gen_cancel"))
+def callback_smart_designer(call):
+    """Gere a confirmação do Smart Designer (modelo oculto Ideogram V3 Turbo)."""
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+
+    if call.data == "smart_gen_cancel":
+        v2_flows.pop(user_id, None)
+        user_states.pop(user_id, None)
+        try:
+            bot.edit_message_text("❌ Cancelado.", call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        return
+
+    # Executar geração com Smart Designer
+    flow = v2_flows.get(user_id, {})
+    prompt = flow.get("prompt", "")
+    if not prompt:
+        bot.answer_callback_query(call.id, "Sessão expirada.")
+        return
+
+    sd = MODELS_V2["smart_designer"]
+    creds = get_user_credits(user_id)
+    if creds < sd["custo"]:
+        bot.edit_message_text(
+            f"❌ Precisas de {sd['custo']} créditos. Saldo: {creds}.",
+            call.message.chat.id, call.message.message_id
+        )
+        return
+
+    if not use_credit(user_id, sd["custo"]):
+        bot.edit_message_text("❌ Erro ao debitar créditos.",
+                              call.message.chat.id, call.message.message_id)
+        return
+
+    try:
+        bot.edit_message_text(
+            f"🪄 <b>Smart Designer</b> · {sd['custo']}c debitados · A gerar...",
+            call.message.chat.id, call.message.message_id, parse_mode='HTML'
+        )
+    except Exception:
+        pass
+
+    try:
+        ar = SIZES_V2[get_user_size_v2(user_id)]["ar"]
+        output = replicate.run(sd["replicate_id"], input={
+            "prompt": prompt,
+            "aspect_ratio": ar,
+            "style_type": "DESIGN",
+            "magic_prompt_option": "AUTO",
+        })
+        if isinstance(output, list) and output:
+            url = str(output[0])
+        elif hasattr(output, "url"):
+            url = str(output.url)
+        else:
+            url = str(output)
+
+        img_bytes = requests.get(url, timeout=60).content
+        cid = add_to_history(user_id, "create_v2_design", prompt[:200], url,
+                             extra={"model_key": "smart_designer", "source": "smart_designer"})
+        creds_left = get_user_credits(user_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        caption = (f"🪄 <b>Smart Designer</b> — Ideogram V3\n"
+                   f"💳 {creds_left} créditos restantes")
+        bot.send_photo(call.message.chat.id, img_bytes, caption=caption,
+                       reply_markup=creation_actions_keyboard(cid, lang), parse_mode='HTML')
+        update_user_stats(user_id, "total_creations")
+        log_system_event("info", "smart_designer_ok", f"user={user_id}", user_id)
+    except Exception as e:
+        add_credits(user_id, sd["custo"], "refund_smart_designer")
+        log_system_event("error", "smart_designer_fail", str(e), user_id)
+        try:
+            bot.edit_message_text(
+                "⚠️ Servidor ocupado, créditos devolvidos. Tenta em 30s.",
+                call.message.chat.id, call.message.message_id
+            )
+        except Exception:
+            bot.send_message(call.message.chat.id, "⚠️ Erro. Créditos devolvidos.")
+        logger.error(f"Erro Smart Designer: {e}")
+    finally:
+        v2_flows.pop(user_id, None)
+        user_states.pop(user_id, None)
+
 
 # ==================== V2 — FLUXO DE EDIÇÃO DE FOTO (UNIFICADO) ====================
 def _v2_show_edit_setup_panel(chat_id, user_id, lang, num_photos=1):
     """Painel unificado para edição de fotos (1 foto ou 2-5 combinadas).
-    Deixa o utilizador escolher modelo/estilos/tamanho antes de escrever o prompt.
+    Sempre força modelo Edit Master (4c) como default — user pode mudar depois.
+    Limpa estilos residuais ao iniciar novo flow (evita Pixel Art colar).
     """
-    # Para edição, o default é Edit Master (4c). Se o user tem outro modelo activo, respeita.
-    model_key = get_user_model_v2(user_id)
-    # Se o modelo activo não faz sentido para edição, troca para edit_master
-    if model_key == "snap_fast":
+    # Sempre reset para Edit Master ao entrar num novo flow de edição (não herda modelo de criação)
+    # Só respeita se o user já tinha escolhido explicitamente um modelo válido para edição NESTA foto
+    pp = pending_photos.get(user_id, {}) or photo_collections.get(user_id, {})
+    edit_models_valid = {"edit_master", "creative_flow", "pro_vision", "ultra_real"}
+    if not pp.get("_model_picked_in_session"):
         model_key = "edit_master"
         set_user_model_v2(user_id, model_key)
+    else:
+        model_key = get_user_model_v2(user_id)
+        if model_key not in edit_models_valid:
+            model_key = "edit_master"
+            set_user_model_v2(user_id, model_key)
+
+    # Limpa estilos residuais se não foram tocados nesta sessão
+    if not pp.get("_styles_picked_in_session"):
+        set_user_styles_v2(user_id, [])
+
     m = get_model_v2(model_key)
     styles = get_user_styles_v2(user_id)
     styles_str = ", ".join([STYLES_V2[s]["nome"] for s in styles[:3]]) if styles else "—"
@@ -5263,6 +6154,11 @@ def callback_v2_edit(call):
             set_user_model_v2(user_id, model_key)
             mm = MODELS_V2[model_key]
             bot.answer_callback_query(call.id, f"Modelo: {mm['nome']} ({mm['custo']}c)")
+            # Marca que o user escolheu explicitamente um modelo nesta sessão
+            if user_id in pending_photos:
+                pending_photos[user_id]["_model_picked_in_session"] = True
+            if user_id in photo_collections:
+                photo_collections[user_id]["_model_picked_in_session"] = True
         # volta ao painel
         try:
             bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -5435,12 +6331,12 @@ def _v2_execute_edit(chat_id, user_id, lang, prompt):
         if s in STYLES_V2:
             final_prompt += STYLES_V2[s]["suffix"]
 
-    proc_texts = {
-        "pt": f"🎨 <b>{m['nome']}</b> · {m['custo']}c debitados · A gerar...",
-        "en": f"🎨 <b>{m['nome']}</b> · {m['custo']}c used · Generating...",
-        "es": f"🎨 <b>{m['nome']}</b> · {m['custo']}c usados · Generando...",
-    }
-    proc_msg = bot.send_message(chat_id, proc_texts.get(lang, proc_texts["pt"]), parse_mode='HTML')
+    init_txt = {
+        "pt": f"🎨 <b>{m['nome']}</b> · {m['custo']}c debitados · A preparar...",
+        "en": f"🎨 <b>{m['nome']}</b> · {m['custo']}c used · Preparing...",
+        "es": f"🎨 <b>{m['nome']}</b> · {m['custo']}c usados · Preparando...",
+    }.get(lang, f"🎨 {m['nome']}")
+    proc_msg_id, loading_stop = _progressive_loading(chat_id, init_txt, lang, total_estimate_s=30)
 
     try:
         input_params = {
@@ -5463,11 +6359,13 @@ def _v2_execute_edit(chat_id, user_id, lang, prompt):
             url = str(output)
 
         img_bytes = requests.get(url, timeout=60).content
-        cid = add_to_history(user_id, "edit", final_prompt[:200], url)
+        cid = add_to_history(user_id, "edit", final_prompt[:200], url,
+                             extra={"model_key": model_key, "source": "edit_v2"})
         creds_left = get_user_credits(user_id)
 
+        loading_stop.set()
         try:
-            bot.delete_message(chat_id, proc_msg.message_id)
+            bot.delete_message(chat_id, proc_msg_id)
         except Exception:
             pass
 
@@ -5482,16 +6380,24 @@ def _v2_execute_edit(chat_id, user_id, lang, prompt):
         log_system_event("info", "v2_edit_ok", f"model={model_key} combine={is_combine}", user_id)
 
     except Exception as e:
+        loading_stop.set()
         add_credits(user_id, m["custo"], "refund_v2_edit_fail")
         save_user_error(user_id, "edit_v2", str(e), f"Edit V2 model={model_key}")
         diagnose_and_notify(e, "edit_v2")
+        err_alt = {
+            "pt": ("⚠️ <b>Edição falhou</b>\n\n"
+                   "Créditos devolvidos.\n\n"
+                   "💡 <i>Sugestões:</i>\n"
+                   "• Tenta daqui a 30 segundos\n"
+                   "• Simplifica o prompt\n"
+                   "• Envia uma foto com qualidade melhor"),
+            "en": "⚠️ Edit failed. Credits refunded. Try again in 30s or simplify your prompt.",
+            "es": "⚠️ Edición falló. Créditos devueltos. Reintenta en 30s.",
+        }.get(lang, "⚠️ Edit failed. Credits refunded.")
         try:
-            bot.edit_message_text(
-                "⚠️ Servidor ocupado, créditos devolvidos. Tenta em 30s.",
-                chat_id, proc_msg.message_id
-            )
+            bot.edit_message_text(err_alt, chat_id, proc_msg_id, parse_mode='HTML')
         except Exception:
-            bot.send_message(chat_id, "⚠️ Erro. Créditos devolvidos.")
+            bot.send_message(chat_id, err_alt, parse_mode='HTML')
         logger.error(f"Erro V2 edit: {e}")
 
 
@@ -5509,115 +6415,189 @@ def _v2_start_combine_flow(user_id, lang, caption):
         photo_collections.pop(user_id, None)
 
 # ==================== VIDEO EXCLUSIVO ADMIN ====================
+VIDEO_COST = 20  # créditos por geração de vídeo (público)
+
 @bot.message_handler(commands=['video'])
 def cmd_video(message):
-    """Geração de video - EXCLUSIVO para super admin"""
+    """Geração de vídeo a partir de imagem/texto — 20 créditos.
+
+    Admin tem override grátis; utilizadores normais pagam 20c.
+    """
     user_id = message.from_user.id
-    if not is_super_admin(user_id):
-        bot.reply_to(message, "❌ Funcionalidade exclusiva.")
-        return
-    
     lang = get_user_lang(user_id)
+    creds = get_user_credits(user_id)
+
+    is_admin = is_super_admin(user_id)
+    cost_line_pt = "grátis (admin)" if is_admin else f"<b>{VIDEO_COST} créditos</b>"
+    cost_line_en = "free (admin)" if is_admin else f"<b>{VIDEO_COST} credits</b>"
+    cost_line_es = "gratis (admin)" if is_admin else f"<b>{VIDEO_COST} créditos</b>"
+
+    texts = {
+        "pt": (f"🎬 <b>Gerar Vídeo</b>\n"
+               f"━━━━━━━━━━━━━━━━\n"
+               f"Cria um vídeo curto de ~6 segundos.\n"
+               f"💳 Custo: {cost_line_pt}\n"
+               f"💼 Saldo: <code>{creds}</code>\n"
+               f"━━━━━━━━━━━━━━━━\n\n"
+               f"Escolhe o modo:"),
+        "en": (f"🎬 <b>Generate Video</b>\n"
+               f"━━━━━━━━━━━━━━━━\n"
+               f"Create a short ~6 second video.\n"
+               f"💳 Cost: {cost_line_en}\n"
+               f"💼 Balance: <code>{creds}</code>\n"
+               f"━━━━━━━━━━━━━━━━\n\n"
+               f"Pick mode:"),
+        "es": (f"🎬 <b>Generar Vídeo</b>\n"
+               f"━━━━━━━━━━━━━━━━\n"
+               f"Crea un vídeo corto de ~6 segundos.\n"
+               f"💳 Costo: {cost_line_es}\n"
+               f"💼 Saldo: <code>{creds}</code>\n"
+               f"━━━━━━━━━━━━━━━━\n\n"
+               f"Elige modo:"),
+    }
+    labels = {
+        "pt": ("✍️ Texto → Vídeo", "📸 Imagem → Vídeo", "❌ Cancelar"),
+        "en": ("✍️ Text → Video",  "📸 Image → Video",  "❌ Cancel"),
+        "es": ("✍️ Texto → Vídeo", "📸 Imagen → Vídeo", "❌ Cancelar"),
+    }.get(lang, ("Text", "Image", "Cancel"))
     markup = telebot.types.InlineKeyboardMarkup(row_width=1)
     markup.add(
-        telebot.types.InlineKeyboardButton("✍️ Texto para Vídeo", callback_data="video_text"),
-        telebot.types.InlineKeyboardButton("📸 Imagem para Vídeo", callback_data="video_image"),
-        telebot.types.InlineKeyboardButton("❌ Cancelar", callback_data="video_cancel")
+        telebot.types.InlineKeyboardButton(labels[0], callback_data="video_text"),
+        telebot.types.InlineKeyboardButton(labels[1], callback_data="video_image"),
+        telebot.types.InlineKeyboardButton(labels[2], callback_data="video_cancel"),
     )
-    bot.send_message(message.chat.id, "🎬 <b>Geração de Vídeo (Admin)</b>\n\nEscolhe o modo:", reply_markup=markup, parse_mode='HTML')
+    bot.send_message(message.chat.id, texts.get(lang, texts["pt"]),
+                     reply_markup=markup, parse_mode='HTML')
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('video_'))
 def callback_video(call):
     user_id = call.from_user.id
-    if not is_super_admin(user_id):
-        return
-    
+    lang = get_user_lang(user_id)
     action = call.data.replace('video_', '')
-    
+
     if action == "cancel":
         try:
             bot.delete_message(call.message.chat.id, call.message.message_id)
-        except:
+        except Exception:
             pass
         return
-    
+
     if action == "text":
         user_states[user_id] = "awaiting_video_prompt"
         try:
             bot.delete_message(call.message.chat.id, call.message.message_id)
-        except:
+        except Exception:
             pass
-        bot.send_message(call.message.chat.id, "🎬 Escreva a descrição do vídeo que deseja gerar:")
-    
+        txt = {"pt": "🎬 Escreve a descrição do vídeo que queres gerar:",
+               "en": "🎬 Write the description of the video you want:",
+               "es": "🎬 Escribe la descripción del vídeo:"}.get(lang, "🎬 Describe video:")
+        bot.send_message(call.message.chat.id, txt, reply_markup=cancel_keyboard(lang))
+
     elif action == "image":
         user_states[user_id] = "awaiting_video_image"
         try:
             bot.delete_message(call.message.chat.id, call.message.message_id)
-        except:
+        except Exception:
             pass
-        bot.send_message(call.message.chat.id, "🎬 Envie a imagem que quer transformar em vídeo:")
+        txt = {"pt": "🎬 Envia a imagem que queres transformar em vídeo:",
+               "en": "🎬 Send the image to turn into video:",
+               "es": "🎬 Envía la imagen para convertir en vídeo:"}.get(lang, "🎬 Send image:")
+        bot.send_message(call.message.chat.id, txt, reply_markup=cancel_keyboard(lang))
+
+def _video_debit(user_id):
+    """Debita créditos para vídeo. Admin isento. Retorna True se OK."""
+    if is_super_admin(user_id):
+        return True
+    if get_user_credits(user_id) < VIDEO_COST:
+        return False
+    return use_credit(user_id, VIDEO_COST)
+
+def _video_refund(user_id):
+    """Refund vídeo em caso de falha (admin não é debitado, logo não refund)."""
+    if not is_super_admin(user_id):
+        add_credits(user_id, VIDEO_COST, "refund_video_fail")
 
 @bot.message_handler(func=lambda m: user_states.get(m.from_user.id) == 'awaiting_video_prompt')
 def handle_video_prompt(message):
     user_id = message.from_user.id
-    if not is_super_admin(user_id):
-        return
+    lang = get_user_lang(user_id)
     user_states.pop(user_id, None)
-    prompt = message.text.strip()
-    
-    proc_msg = bot.reply_to(message, "🎬 Gerando vídeo... Isto pode demorar 30-60 segundos.")
+    prompt = (message.text or "").strip()
+
+    if len(prompt) < 3:
+        bot.reply_to(message, "❌ Descrição muito curta. Tenta de novo.")
+        return
+
+    if not _video_debit(user_id):
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("🛒 Comprar", callback_data="action_buy"))
+        bot.reply_to(message, f"❌ Precisas de {VIDEO_COST} créditos. Saldo: {get_user_credits(user_id)}",
+                     reply_markup=mk)
+        return
+
+    if not _video_rate_limit_ok(user_id):
+        wait = _video_rate_limit_remaining(user_id)
+        _video_refund(user_id)  # devolve créditos, nem sequer começa
+        bot.reply_to(message, f"⏱️ Aguarda {wait}s para gerar o próximo vídeo.")
+        return
+
+    proc_msg = bot.reply_to(message, f"🎬 A gerar vídeo... ({VIDEO_COST}c debitados · ~30-60s)")
     try:
-        output = replicate.run("xai/grok-imagine-video", input={
-            "prompt": prompt,
-            "duration": 6
-        })
-        if isinstance(output, list):
-            video_url = str(output[0])
-        elif hasattr(output, 'url'):
-            video_url = str(output.url)
-        else:
-            video_url = str(output)
-        
+        output = replicate.run("xai/grok-imagine-video", input={"prompt": prompt, "duration": 6})
+        video_url = str(output[0]) if isinstance(output, list) else (str(output.url) if hasattr(output, 'url') else str(output))
         bot.delete_message(message.chat.id, proc_msg.message_id)
         video_data = requests.get(video_url, timeout=120).content
         bot.send_video(message.chat.id, video_data, caption=f"🎬 Vídeo gerado!\n💬 {prompt[:80]}")
+        update_user_stats(user_id, "total_videos")
     except Exception as e:
-        bot.edit_message_text(f"❌ Erro: {str(e)[:200]}", message.chat.id, proc_msg.message_id)
-        logger.error(f"Erro video: {e}")
+        _video_refund(user_id)
+        try:
+            bot.edit_message_text(f"⚠️ Erro. Créditos devolvidos.",
+                                  message.chat.id, proc_msg.message_id)
+        except Exception:
+            bot.reply_to(message, "⚠️ Erro. Créditos devolvidos.")
+        logger.error(f"Erro video text: {e}")
 
 @bot.message_handler(func=lambda m: user_states.get(m.from_user.id) == 'awaiting_video_image', content_types=['photo'])
 def handle_video_image(message):
     user_id = message.from_user.id
-    if not is_super_admin(user_id):
-        return
+    lang = get_user_lang(user_id)
     user_states.pop(user_id, None)
-    
-    proc_msg = bot.reply_to(message, "🎬 Transformando imagem em vídeo... 30-60 segundos.")
+
+    if not _video_debit(user_id):
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("🛒 Comprar", callback_data="action_buy"))
+        bot.reply_to(message, f"❌ Precisas de {VIDEO_COST} créditos. Saldo: {get_user_credits(user_id)}",
+                     reply_markup=mk)
+        return
+
+    if not _video_rate_limit_ok(user_id):
+        wait = _video_rate_limit_remaining(user_id)
+        _video_refund(user_id)
+        bot.reply_to(message, f"⏱️ Aguarda {wait}s para gerar o próximo vídeo.")
+        return
+
+    proc_msg = bot.reply_to(message, f"🎬 A transformar imagem em vídeo... ({VIDEO_COST}c debitados · ~30-60s)")
     try:
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         image_base64 = base64.b64encode(downloaded_file).decode('utf-8')
         image_data_url = f"data:image/jpeg;base64,{image_base64}"
-        
         caption = message.caption or "animate this image with subtle natural movement"
-        
         output = replicate.run("xai/grok-imagine-video", input={
-            "prompt": caption,
-            "image": image_data_url,
-            "duration": 6
+            "prompt": caption, "image": image_data_url, "duration": 6
         })
-        if isinstance(output, list):
-            video_url = str(output[0])
-        elif hasattr(output, 'url'):
-            video_url = str(output.url)
-        else:
-            video_url = str(output)
-        
+        video_url = str(output[0]) if isinstance(output, list) else (str(output.url) if hasattr(output, 'url') else str(output))
         bot.delete_message(message.chat.id, proc_msg.message_id)
         video_data = requests.get(video_url, timeout=120).content
         bot.send_video(message.chat.id, video_data, caption="🎬 Imagem animada!")
+        update_user_stats(user_id, "total_videos")
     except Exception as e:
-        bot.edit_message_text(f"❌ Erro: {str(e)[:200]}", message.chat.id, proc_msg.message_id)
+        _video_refund(user_id)
+        try:
+            bot.edit_message_text("⚠️ Erro. Créditos devolvidos.", message.chat.id, proc_msg.message_id)
+        except Exception:
+            bot.reply_to(message, "⚠️ Erro. Créditos devolvidos.")
         logger.error(f"Erro video image: {e}")
 
 # ==================== BLOQUEIO DE ARQUIVOS NAO SUPORTADOS ====================
@@ -5832,27 +6812,68 @@ def handle_all_messages(message):
         bot.reply_to(message, f"⚠️ Aguarda {wait}s")
         return
     
-    # DETECTAR INTENÇÃO DE GERAÇÃO DE IMAGEM (AI-powered)
-    # Primeiro filtro: keyword conservadora (evita false positives)
-    if detect_image_intent(text):
-        # Pedido DIRETO e explicito detectado. Confirma via AI se deve gerar ja
+    # DETECTAR INTENÇÃO (AI-powered, 2 camadas)
+    # Camada 1: regex conservador (pedidos directos óbvios)
+    # Camada 2: GPT classifier (incluindo detecção de 'design' → Smart Designer)
+    direct_hit = detect_image_intent(text)
+    if direct_hit:
         intent_result = classify_user_intent_ai(text, lang)
-        if intent_result.get("intent") == "generate" and intent_result.get("ready_to_generate"):
-            prompt = intent_result.get("clean_prompt") or text
-            creditos = get_user_credits(user_id)
-            if creditos < 1:
-                texts = {"pt": "❌ Créditos insuficientes! Use /start para comprar.",
-                         "en": "❌ Insufficient credits! Use /start to buy.",
-                         "es": "❌ ¡Créditos insuficientes! Usa /start para comprar."}
-                bot.reply_to(message, texts.get(lang, texts["pt"]))
-                return
-            if not use_credit(user_id, 1):
-                return
-            processar_criacao(message.chat.id, user_id, prompt, lang)
-            return
-        # Se AI diz que nao esta pronto, cai para chat (pede mais detalhes)
+    else:
+        # Ainda assim corre classifier em textos razoáveis (>=4 palavras) para apanhar design
+        if len(text.split()) >= 4:
+            intent_result = classify_user_intent_ai(text, lang)
+        else:
+            intent_result = {"intent": "chat", "ready_to_generate": False, "clean_prompt": "", "is_design": False}
 
-    # CHAT NORMAL (IA responde de forma inteligente, pede fotos/ideias quando preciso)
+    # Se é DESIGN gráfico → oferece Smart Designer (não gera logo, pede confirmação)
+    if intent_result.get("is_design") and not message.reply_to_message:
+        sd = MODELS_V2.get("smart_designer")
+        creds = get_user_credits(user_id)
+        prompt_en = intent_result.get("clean_prompt") or text
+        # Guarda prompt para o user confirmar depois
+        user_states[user_id] = "smart_designer_confirm"
+        v2_flows[user_id] = {"prompt": prompt_en, "model_key": "smart_designer", "source": "ai_chat"}
+        texts = {
+            "pt": (f"🪄 <b>Smart Designer detectado!</b>\n\n"
+                   f"Percebi que queres material gráfico (flyer / logo / panfleto / poster).\n"
+                   f"Tenho um modelo especial para isso: <b>Ideogram V3</b> — excelente em texto e tipografia.\n\n"
+                   f"💳 Custo: <b>{sd['custo']} créditos</b> · Saldo: <code>{creds}</code>\n\n"
+                   f"Confirma para gerar?"),
+            "en": (f"🪄 <b>Smart Designer detected!</b>\n\n"
+                   f"You seem to want graphic material (flyer / logo / poster).\n"
+                   f"I have a special model for this: <b>Ideogram V3</b> — excellent typography.\n\n"
+                   f"💳 Cost: <b>{sd['custo']} credits</b> · Balance: <code>{creds}</code>\n\n"
+                   f"Confirm to generate?"),
+            "es": (f"🪄 <b>Smart Designer detectado!</b>\n\n"
+                   f"Detecté que quieres material gráfico (flyer / logo / poster).\n"
+                   f"Tengo un modelo especial: <b>Ideogram V3</b> — excelente tipografía.\n\n"
+                   f"💳 Costo: <b>{sd['custo']} créditos</b> · Saldo: <code>{creds}</code>\n\n"
+                   f"¿Confirmas para generar?"),
+        }
+        mk = telebot.types.InlineKeyboardMarkup(row_width=2)
+        mk.add(
+            telebot.types.InlineKeyboardButton("✅ Gerar", callback_data="smart_gen_go"),
+            telebot.types.InlineKeyboardButton("❌ Não", callback_data="smart_gen_cancel")
+        )
+        bot.reply_to(message, texts.get(lang, texts["pt"]), reply_markup=mk, parse_mode='HTML')
+        return
+
+    # Geração imediata (intent 'generate' com prompt pronto)
+    if intent_result.get("intent") == "generate" and intent_result.get("ready_to_generate"):
+        prompt = intent_result.get("clean_prompt") or text
+        creditos = get_user_credits(user_id)
+        if creditos < 1:
+            texts = {"pt": "❌ Créditos insuficientes! Usa /start para comprar.",
+                     "en": "❌ Insufficient credits! Use /start to buy.",
+                     "es": "❌ ¡Créditos insuficientes! Usa /start para comprar."}
+            bot.reply_to(message, texts.get(lang, texts["pt"]))
+            return
+        if not use_credit(user_id, 1):
+            return
+        processar_criacao(message.chat.id, user_id, prompt, lang)
+        return
+
+    # CHAT NORMAL (IA responde de forma inteligente)
     resposta = get_smart_chat_response(user_id, text, lang)
     bot.reply_to(message, f"🤖 {resposta}")
 
@@ -5877,10 +6898,27 @@ def stripe_webhook():
         amount_total = session.get('amount_total', 0)  # Em centimos
         
         if user_id:
+            # Detecta primeira compra ANTES de add_credits (add_credits regista histórico)
+            is_first_purchase = not _has_ever_purchased(user_id)
+            pacote_id = int(meta.get('pacote_id', 0) or 0)
+            first_bonus = _first_purchase_bonus_credits(pacote_id) if is_first_purchase else 0
+
             novo = add_credits(user_id, creditos, f"stripe_{pacote}")
+            if first_bonus > 0:
+                novo = add_credits(user_id, first_bonus, f"stripe_{pacote}_first_bonus")
             lang = get_user_lang(user_id)
-            bot.send_message(user_id, f"🎉 +{creditos} creditos!\n💳 Total: <code>{novo}</code>", reply_markup=main_keyboard(lang), parse_mode='HTML')
-            logger.info(f"Pagamento: {creditos} para {user_id} (EUR {amount_total/100:.2f})")
+
+            if first_bonus > 0:
+                bot.send_message(user_id,
+                                 f"🎉 <b>Compra confirmada!</b>\n"
+                                 f"+{creditos} créditos comprados\n"
+                                 f"🎁 +{first_bonus} <b>bónus de primeira compra!</b>\n"
+                                 f"💳 Total: <code>{novo}</code>",
+                                 reply_markup=main_keyboard(lang), parse_mode='HTML')
+            else:
+                bot.send_message(user_id, f"🎉 +{creditos} créditos!\n💳 Total: <code>{novo}</code>",
+                                 reply_markup=main_keyboard(lang), parse_mode='HTML')
+            logger.info(f"Pagamento: {creditos}+{first_bonus} para {user_id} (EUR {amount_total/100:.2f})")
             
             # Referral bonus: se comprou 5EUR+ e foi indicado, dar 10 creditos ao referrer
             if amount_total >= 500:  # 500 centimos = 5 EUR
