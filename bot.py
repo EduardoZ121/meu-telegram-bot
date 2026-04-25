@@ -91,6 +91,16 @@ def health():
     return {"status": "online", "bot": "Remake Pixel"}, 200
 
 
+# ==================== ENDPOINTS LANDING PAGE ====================
+_LANDING_DEMO_IP = {}  # ip -> [timestamps] para rate limit da demo
+_LANDING_NSFW_RE = re.compile(
+    r'\b(nude|naked|nsfw|porn|sex|sexy|erotic|hentai|topless|boobs|breasts|'
+    r'nipples|penis|vagina|dick|pussy|cum|nudez|pelado|pelada|nu|nua|'
+    r'peito|seios|buceta|gozar|desnudo|desnuda|tetas)\b',
+    re.IGNORECASE
+)
+
+
 def _landing_client_ip():
     from flask import request
     xff = request.headers.get("x-forwarded-for")
