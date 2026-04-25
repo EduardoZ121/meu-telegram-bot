@@ -175,10 +175,10 @@ def landing_demo_generate():
         if len(prompt) < 5 or len(prompt) > 300:
             return jsonify({"success": False, "error": "Prompt must be 5-300 chars"})
 
-        # NSFW block
-        if _LANDING_NSFW_RE.search(prompt):
-            log_system_event("nsfw", "landing_blocked", prompt[:100], None)
-            return jsonify({"success": False, "error": "Prompt contains blocked content."})
+        # NSFW landing block REMOVIDO — filtro desativado
+        # if _LANDING_NSFW_RE.search(prompt):
+        #     log_system_event("nsfw", "landing_blocked", prompt[:100], None)
+        #     return jsonify({"success": False, "error": "Prompt contains blocked content."})
 
         # Rate limit: 1 por IP / 24h
         ip = _landing_client_ip()
@@ -465,18 +465,12 @@ load_secondary_admins()
 
 # ==================== SISTEMA GOD-MODE ADMIN (CONFIG GLOBAL) ====================
 DEFAULT_SYSTEM_CONFIG = {
-    "nsfw_enabled": False,          # False = bloqueia NSFW globalmente (default seguro)
-    "maintenance_mode": False,       # True = so admin usa o bot
-    "generation_disabled": False,    # True = desliga toda a geracao (emergencia)
-    "safe_mode": False,              # True = filtros + rate-limit mais restritos
-    "rate_limit_per_min": 10,        # max pedidos por minuto por user
-    "nsfw_keywords": [
-        "nude", "naked", "nsfw", "porn", "sex", "sexy", "erotic", "hentai",
-        "topless", "boobs", "breasts", "nipples", "penis", "vagina", "dick",
-        "pussy", "blowjob", "cum", "orgasm", "lingerie underwear", "xxx",
-        "nudez", "pelado", "pelada", "nu", "nua", "peito", "seios", "buceta",
-        "pinto", "piroca", "gozar", "gozo", "desnudo", "desnuda", "tetas"
-    ]
+    "nsfw_enabled": True,           # SEMPRE permitido — Replicate decide
+    "maintenance_mode": False,
+    "generation_disabled": False,
+    "safe_mode": False,
+    "rate_limit_per_min": 10,
+    "nsfw_keywords": []             # VAZIO — sem filtro de palavras-chave
 }
 
 def get_system_config():
@@ -1349,7 +1343,8 @@ def gerar_imagem_modelo(prompt, aspect_ratio="1:1", image_input=None, num_output
         input_params = {
             "prompt": prompt,
             "aspect_ratio": aspect_ratio,
-            "num_outputs": num_outputs
+            "num_outputs": num_outputs,
+            "disable_safety_checker": True
         }
         if image_input:
             input_params["image"] = image_input
