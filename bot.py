@@ -842,6 +842,12 @@ def add_credits(user_id, quantidade, tipo="compra"):
     data[user_id_str]["creditos"] += quantidade
     save_json(CREDITS_FILE, data, CREDITS_LOCK)
     logger.info(f"User {user_id} recebeu {quantidade} crédito(s) ({tipo})")
+    # 🔓 Hook: qualquer compra paga (não reembolso/bonus) desbloqueia/renova premium
+    try:
+        if tipo in ("compra", "purchase", "stripe", "stripe_purchase", "manual_admin"):
+            grant_premium_access(user_id)
+    except Exception as _e:
+        logger.warning(f"Falha ao conceder premium em add_credits: {_e}")
     return data[user_id_str]["creditos"]
 
 # ==================== ESTILOS PREDEFINIDOS (PERCHANCE) ====================
@@ -1636,7 +1642,212 @@ PADRAO_STYLES = {
         "subject": "the person",
         "prompt": "Final comic page. Top: [subject] standing victorious in silence, battlefield behind. Middle: Second character approaches. Speech: 'IT'S OVER.' Close-up: [subject] calmer, eyes heavy but peaceful. Speech: 'NOTHING WILL BRING HER BACK...' Final panel: [subject] walking away into the distance at sunset. Speech: 'BUT I WON'T LET IT HAPPEN AGAIN.' Atmosphere: calm, bittersweet, golden light, closure. preserve identity, keep same face, maintain facial structure, do not change person, comic style face adaptation.",
     },
+
+    # ===== NOVOS — Iteração 5 =====
+    # ▼ UNISSEX — sub-grupo "bw" (variação)
+    "u_bw_intro": {
+        "nome": "🌃 Introspecção Cinemática",
+        "cat": "unisex", "grp": "bw",
+        "subject": "the person",
+        "prompt": "Cinematic introspective black and white portrait featuring [subject] with stronger contrast between window light and deep shadows. Slightly darker environment, sense of deep reflection. Sharper marked shadows, film-noir style. Subtle cinematic film grain, deeper color grading. " + _IDENT_TRAIL,
+    },
+
+    # ▼ UNISSEX — novo sub-grupo "lifestyle" (4 estilos)
+    "u_ls_mirror": {
+        "nome": "🪞 Mirror Selfie Concrete",
+        "cat": "unisex", "grp": "lifestyle",
+        "subject": "the person",
+        "prompt": "Cinematic portrait using the reference image as identity anchor, of [subject] with short curly dark hair leaning against a textured concrete wall, wearing a loose white button-down shirt and layered gold necklaces. Warm golden hour sunlight coming through a window creates dramatic shadow patterns on the wall. Soft natural light on the face, thoughtful expression looking sideways, minimal aesthetic, shallow depth of field, film photography style, 85mm lens, ultra realistic, warm tones, high detail, moody atmosphere. " + _IDENT_TRAIL,
+    },
+    "u_ls_cafe": {
+        "nome": "☕ Urban Café Layered",
+        "cat": "unisex", "grp": "lifestyle",
+        "subject": "the person",
+        "prompt": "Portrait of [subject] in a stylish, layered outfit sitting at a wooden table in a street cafe. Wearing a brown oversized jacket with a light yellow jumper draped over the shoulders, light blue oversized loose-fitting jeans with cuffs, a pale yellow cap with a small logo, and narrow oval glasses with clear lenses and dark frames. Long dark hair, calm makeup, tanned skin. Plastic cup of green smoothie nearby, large bouquet of yellow tulips. Soft daylight, urban lifestyle aesthetic. Color scheme: chocolate, lemon yellow, denim. Relaxed pose, resting chin on hand. Background: city cafe window with evening lights. High resolution, realistic, professional portrait photography, warm toning, vibrant color correction. " + _IDENT_TRAIL,
+    },
+    "u_ls_chibi": {
+        "nome": "🧸 Wellness Chibi Meditation",
+        "cat": "unisex", "grp": "lifestyle",
+        "subject": "the person",
+        "prompt": "A calm [subject] sitting cross-legged on a bed in a cozy minimal bedroom, meditating with eyes closed, wearing an oversized light grey sweatshirt and matching grey joggers. Soft natural morning light from the side window. Around the subject are tiny cute chibi versions of the same identity sitting on shoulders, knees and around, doing activities like reading, meditating, stretching and dancing. Hand-drawn pastel doodles and speech bubbles floating around the head with words like 'Content', 'Focus', 'Growth', 'Sleep', 'Work', 'Recharge'. Cute pastel hearts, stars, smiley faces and sparkles around the scene. Style: soft pastel illustration + realistic photography mix, dreamy wellness vibe, cozy aesthetic, ultra detailed, 4k. " + _IDENT_TRAIL,
+    },
+    "u_ls_wellness": {
+        "nome": "🪷 Wellness Editorial Calm",
+        "cat": "unisex", "grp": "lifestyle",
+        "subject": "the person",
+        "prompt": "Editorial wellness scene featuring [subject] sitting sideways in a wooden chair with terracotta upholstery, relaxed posture, looking towards a window with soft natural light entering. Hair tied back naturally, comfortable outfit in neutral tones (beige sweatshirt and light pants), realistic fabric texture. Soft natural side light with light diffusion, creating delicate shadows. Out-of-focus plants in foreground creating depth, cinematic framing, rule of thirds, minimalist cozy environment. Calm introspective atmosphere, self-care aesthetic. Ultra-realistic photography, 8k, natural skin texture, warm soft color grading, premium editorial style. " + _IDENT_TRAIL,
+    },
+
+    # ▼ UNISSEX — novo sub-grupo "epic" (5 estilos premium 🔒)
+    "u_ep_sorcerer": {
+        "nome": "🔮 Fantasy Sorcerer Poster",
+        "cat": "unisex", "grp": "epic", "locked": True,
+        "subject": "the person",
+        "prompt": "Hyper-realistic cinematic movie poster of [subject] as a powerful sorcerer bursting through a cracked Queen of Spades playing card. The card explodes outward with stone fragments, dust, and debris frozen mid-air. Wearing an ornate royal maroon and gold embroidered medieval fantasy jacket, rich fabric textures, intricate detailing, regal and mystical. The subject extends one hand forward, fingers glowing with intense magical energy, subtle golden sparks and dark arcane aura. Intense piercing gaze, confident dominant expression, cinematic hero framing. Dramatic chiaroscuro lighting, dark moody background, volumetric light rays, ultra-detailed textures, photorealistic face, epic fantasy realism, movie poster composition, high contrast, dynamic motion, dust particles, 8K. " + _IDENT_TRAIL,
+    },
+    "u_ep_grid_classic": {
+        "nome": "🎬 Editorial Grid — Classic",
+        "cat": "unisex", "grp": "epic", "locked": True,
+        "subject": "the person",
+        "prompt": "Professional studio fashion photoshoot in a 2×2 grid collage showing four poses of [subject] wearing black sunglasses. Outfit: deep emerald green tailored blazer, cream/off-white dress shirt, black slim trousers, burgundy tie, silver watch. Blazer appears differently across frames (worn, draped over shoulder, partially removed, held). Background: clean teal-to-turquoise gradient studio. Poses: 1. Close portrait adjusting tie. 2. Seated editorial pose leaning forward elbow on knee. 3. Relaxed pose with vintage camera around neck. 4. Stylish pose running hand through hair while holding blazer. Lighting: three-point studio lighting — softbox key 45° camera left, soft fill camera right, subtle rim light. 85mm f/2.2 ISO 100 1/160s. Ultra-realistic GQ/Vogue editorial, sharp 4K, clean 2×2 grid. " + _IDENT_TRAIL,
+    },
+    "u_ep_grid_dark": {
+        "nome": "🎬 Editorial Grid — Dark Mode",
+        "cat": "unisex", "grp": "epic", "locked": True,
+        "subject": "the person",
+        "prompt": "Same 2×2 grid editorial of [subject] with sunglasses, identical outfit and poses, but darker teal gradient with subtle vignette, stronger contrast, deeper shadows, cinematic moody tone. Editorial high contrast, 4K, 2×2 grid. " + _IDENT_TRAIL,
+    },
+    "u_ep_grid_lux": {
+        "nome": "🎬 Editorial Grid — Soft Luxury",
+        "cat": "unisex", "grp": "epic", "locked": True,
+        "subject": "the person",
+        "prompt": "Same 2×2 grid editorial of [subject] with sunglasses, identical outfit and poses, but soft pastel teal gradient cleaner luxury look, softer diffusion, more even highlights, luxury fashion tone. Clean Vogue-style, 4K, 2×2 grid. " + _IDENT_TRAIL,
+    },
+    "u_ep_grid_street": {
+        "nome": "🎬 Editorial Grid — Street Edge",
+        "cat": "unisex", "grp": "epic", "locked": True,
+        "subject": "the person",
+        "prompt": "Same 2×2 grid editorial of [subject] with sunglasses, identical outfit and poses, but teal gradient with subtle texture, slightly harsher lighting, sharper shadows, street-fashion tone. Edgy editorial sharper contrast, 4K, 2×2 grid. " + _IDENT_TRAIL,
+    },
+
+    # ▼ UNISSEX — novo sub-grupo "scifi" (2 estilos premium 🔒)
+    "u_sf_cyber": {
+        "nome": "🔬 Cyber Science Portrait",
+        "cat": "unisex", "grp": "scifi", "locked": True,
+        "subject": "the person",
+        "prompt": "Cinematic close-up portrait of [subject] in side profile, wet hair strands on the skin, intense reflective eyes, mathematical formulas and scientific equations projected across the face and neck, glowing white handwritten symbols, physics diagrams and abstract calculations overlay, futuristic holographic projection, dark moody background, dramatic lighting, high contrast, detailed skin texture, cyberpunk science aesthetic, shallow depth of field, volumetric lighting, photorealistic, 8k, film still, sci-fi atmosphere. " + _IDENT_TRAIL,
+    },
+    "u_sf_cybergoth": {
+        "nome": "💜 Cybergoth Neon Portrait",
+        "cat": "unisex", "grp": "scifi", "locked": True,
+        "subject": "the person",
+        "prompt": "Cyberpunk portrait of [subject] with pale synthetic complexion, dark metallic lipstick, intense gaze directed at viewer. Vivid holographic glow with magenta and cyan edge lighting. Captured on a mirrorless 85mm f/1.2, deep atmospheric bokeh. Cyberpunk portraiture, techno-goth aesthetic, high-contrast digital realism, ultra high resolution, hyper-detailed textures, cinematic sci-fi realism. " + _IDENT_TRAIL,
+    },
+
+    # ▼ MULHERES — novos
+    "wom_mirror_concrete": {
+        "nome": "🪞 Mirror Bedroom Selfie",
+        "cat": "women",
+        "subject": "the woman",
+        "prompt": "Cinematic portrait of [subject] with short curly dark hair leaning against a textured concrete wall, wearing a loose white button-down shirt and layered gold necklaces. Warm golden hour sunlight through a window creates dramatic shadow patterns. Soft natural light on the face, thoughtful sideways expression, minimal aesthetic, shallow depth of field, film photography style, 85mm lens, warm tones, high detail. " + _IDENT_TRAIL,
+    },
+    "wom_fitness_split": {
+        "nome": "💪 Fitness Lifestyle Split",
+        "cat": "women",
+        "subject": "the woman",
+        "prompt": "Modern lifestyle split composition poster combining a luxurious smartphone gym selfie with a healthy diet bowl. Top section: [subject] in a luxury gym taking a mirror selfie holding a smartphone, wearing stylish sports bra and high-waisted athletic shorts/leggings, healthy toned physique, post-workout glow, modern gym mirrors, soft natural window light. Bottom section: clean top-down food photography of healthy breakfast bowl with strawberries, blueberries, banana slices, granola, yogurt, on wooden table, with minimal nutrition infographic next to bowl labelled 'Banana 90 kcal / Strawberries 50 / Blueberries 60 / Granola 180 / Yogurt 120 / Total 500 kcal'. Soft neutrals, natural wood tones, fresh fruit colors. Photorealistic, high detail, fitness lifestyle aesthetic. " + _IDENT_TRAIL,
+    },
+
+    # ▼ STORIES — nova categoria "📱 Posts Instagram" (3 estilos)
+    "st_awareness": {
+        "nome": "📰 Editorial Awareness Post",
+        "cat": "stories",
+        "subject": "the person",
+        "prompt": "Cinematic editorial portrait of [subject] in profile, long wavy dark brown hair, wearing beige blazer over white top. Background: classic old building staircase, slightly blurred for architectural depth. Side natural light with dramatic contrast highlighting facial contours and hair texture, soft refined shadows. Minimalist elegant framing, focus on profile, clean sophisticated aesthetic. Integrated text on image: 'JÁ PULOU UM POST SÓ PORQUE ALGO TE INCOMODOU NO VISUAL? ACONTECE MAIS DO QUE VOCÊ IMAGINA.' Modern sans-serif typography, white, with bold parts for emphasis, balanced spacing, professional feed style. Neutral sophisticated color grading, light contrast, premium look. Ultra-realistic 8K editorial photography. --ar 4:5. " + _IDENT_TRAIL,
+    },
+    "st_testimonial": {
+        "nome": "💼 Professional Testimonial Post",
+        "cat": "stories",
+        "subject": "the person",
+        "prompt": "Professional personal-marketing portrait of [subject] sitting in natural posture, genuine smile, wearing a white blouse and jeans. Modern bright office environment with soft natural lighting, minimal blurred elements in background. Soft diffused warm-toned light highlighting the face. Clean framing, balanced background. Graphic element: rounded testimonial bubble with a small circular photo of the same subject inside. Text inside bubble: 'O meu sucesso profissional nunca seria alcançado se não houvessem pessoas incríveis ao meu lado...' Generic professional name + @grandesite below. Modern clean sans-serif typography. Light warm welcoming color grading. Ultra-realistic 8K editorial photography. --ar 4:5. " + _IDENT_TRAIL,
+    },
+    "st_wellness": {
+        "nome": "🪷 Wellness Editorial Post",
+        "cat": "stories",
+        "subject": "the person",
+        "prompt": "Editorial wellness scene of [subject] sitting sideways in a wooden chair with terracotta upholstery, relaxed posture, looking toward a window with soft natural light. Hair naturally tied, comfortable neutral-toned outfit. Soft side natural light with delicate shadows. Out-of-focus plants in foreground for depth. Calm cozy minimalist atmosphere. Integrated text on image: 'Você não precisa estar em alerta o tempo todo.' followed by 'Às vezes descansar também é um ato de cuidado.' Modern elegant white serif typography, well-spaced, naturally integrated into scene. Warm soft color grading, premium editorial style. Ultra-realistic 8K. --ar 4:5. " + _IDENT_TRAIL,
+    },
+
+    # ▼ SENSUAL — nova categoria 🔒 (11 estilos: 2 free + 9 locked)
+    "sn_postshower": {
+        "nome": "🚿 Post-Shower iPhone Candid",
+        "cat": "sensual",
+        "subject": "the woman",
+        "prompt": "Ultra photorealistic iPhone-style candid photo of [subject], 35mm look, 4:3 ratio, slight handheld motion, mobile HDR. 11:36 PM, warm bedside lamp 3200K, bedroom near unmade bed, intimate quiet night atmosphere. Subject stands near bed, one hand lightly holding hoodie hem slightly lifting it, hip subtly shifted, relaxed stance, calm confident eye contact. Natural beauty, hazel eyes, soft feminine features, curvy realistic silhouette, dark brunette damp loose waves from shower. Outfit: oversized light grey hoodie soft cotton subtly clinging to damp skin, bare legs visible naturally. Realistic skin pores, post-shower glow on shoulders/collarbones/neck, slight moisture sheen, fabric gently following body contours. Mood: intimate, confident, slightly seductive but natural, candid spontaneous. Avoid: explicit nudity, graphic exposure, distortion, artificial skin. " + _IDENT_TRAIL,
+    },
+    "sn_bedroom": {
+        "nome": "🛏️ Bedroom iPhone Candid",
+        "cat": "sensual",
+        "subject": "the woman",
+        "prompt": "Ultra photorealistic iPhone-style candid of [subject], 35mm look, 4:3 ratio. Bedroom near unmade bed, warm bedside lamp 3200K, soft shadows, late night. Subject stands near bed in relaxed posture, hip slightly shifted, calm confident eye contact. Outfit: oversized light grey hoodie naturally draped, subtly contouring silhouette, bare legs visible casually. Natural skin pores, post-shower glow, slight damp sheen on collarbones/neck, damp loose waves. Mood: candid, soft indoor realism, slightly sensual but natural, cinematic yet grounded. Avoid: explicit nudity, distortion, artificial skin. " + _IDENT_TRAIL,
+    },
+    "sn_dark_asteric": {
+        "nome": "🌒 Dark Asteric",
+        "cat": "sensual", "locked": True,
+        "subject": "the woman",
+        "prompt": "Ultra photorealistic iPhone-style candid of [subject], 4:3 ratio, 35mm look. Dim bedroom, minimal lighting, stronger shadows, warm bedside light mixed with darker ambient tones. Subject stands near bed slightly leaning, one hand holding hoodie hem, posture relaxed but more intense. Direct eye contact with deeper mysterious expression. Damp brunette hair messier waves. Outfit: oversized grey hoodie falling naturally, bare legs partially visible in shadow. Visible skin texture stronger contrast, deeper shadows across face/body, light catching moisture, cinematic shadow gradients. Mood: moody intimate slightly edgy, late-night raw aesthetic. Avoid: explicit nudity. " + _IDENT_TRAIL,
+    },
+    "sn_minimal": {
+        "nome": "🤍 Minimalist Lifestyle Portrait",
+        "cat": "sensual", "locked": True,
+        "subject": "the woman",
+        "prompt": "Modern minimalist lifestyle portrait of [subject] standing leaning against a clean white desk in a contemporary room, relaxed posture, calm direct gaze. Natural facial features with soft makeup, clean realistic skin texture, hair in simple ponytail. Outfit: light gray long-sleeved form-fitting ribbed knit lounge set. Minimalist room with soft off-white walls, clean desk with dual monitors PC tower accessories, subtle tech atmosphere without clutter. Soft even lighting, gentle shadows, clean natural indoor tones. Calm confident modern lifestyle aesthetic, contemporary editorial look, ultra photorealistic. " + _IDENT_TRAIL,
+    },
+    "sn_mirror_gaming": {
+        "nome": "🎮 Mirror Selfie Gaming Room",
+        "cat": "sensual", "locked": True,
+        "subject": "the woman",
+        "prompt": "Ultra photorealistic mirror selfie of [subject], 8k, raw style, 35mm equivalent. Vibrant indoor RGB lighting with soft pink tones and warm ambient glow, influencer aesthetic, cozy gaming room. White wood-paneled walls, white shelving with gaming items and colorful accessories, plush pink gaming chair with soft cushion, decorative ivy vines, small ornamental tree. Slim fit physique with realistic proportions, positioned in crouching squat on a soft rug, body in side profile relative to mirror. Long hair with soft bangs, dark-framed glasses, confident focused gaze through mirror reflection. Outfit: fitted long-sleeve crop top, short pleated skirt, over-the-knee socks, smartphone in one hand. Vertical 9:16 full-body. " + _IDENT_TRAIL,
+    },
+    "sn_actress": {
+        "nome": "🎬 Cinematic Actress Concepts",
+        "cat": "sensual", "locked": True,
+        "subject": "the woman",
+        "prompt": "Ultra-detailed cinematic portrait of [subject] in a versatile aesthetic. Concept: blend of sport-minimal energy (vibrant athletic outfit, sunglasses, high-angle shot interacting with reflective metallic sphere, strong color contrast background, sharp lighting), urban glamour (rooftop overlooking city, elegant gown with subtle shine, accessories, city lights bokeh), lifestyle mirror (casual athletic outfit indoor mirror), and character-inspired fashion (playful themed outfit clean studio). Combination of natural studio and cinematic lighting, soft controlled shadows. Confident expressive modern, mix of playful elegant cinematic. Editorial fashion 8k sharp textures. " + _IDENT_TRAIL,
+    },
+    "sn_lux_mirror": {
+        "nome": "💎 Luxury Mirror Editorial",
+        "cat": "sensual", "locked": True,
+        "subject": "the woman",
+        "prompt": "Editorial fashion portrait of [subject] with naturally curvy toned body, voluminous dark curly hair, wearing a long beige body-fitting shape dress with realistic drape and detailed texture. Pose: back to camera, hands behind head, looking over shoulder toward a large round mirror, frontal reflection visible. Modern clean interior, light floor, contrasting dark rug, softly translucent white curtains. Soft natural light through window creating delicate highlights and gentle shadows, refined cinematic aesthetic. Composition: balance between body and reflection, light depth of field, elegant minimal framing. Sophisticated sensual atmosphere, luxury editorial, no exaggeration. Warm neutral color grading, ultra-realistic, 8k, sharp focus, natural fabric and skin texture. --ar 4:5. " + _IDENT_TRAIL,
+    },
+    "sn_softglam": {
+        "nome": "💖 Mirror Selfie Soft Glam",
+        "cat": "sensual", "locked": True,
+        "subject": "the woman",
+        "prompt": "Fashion/lifestyle portrait of [subject] with voluminous dark curly hair, naturally curvy silhouette, wearing a long light-pink strapless body-fitting dress with soft texture and subtle slight transparency. Pose: taking a mirror selfie with phone in hand, natural confident posture, slight body lean for composition, relaxed expression. Modern apartment with wooden door and wall mirror, clean contemporary aesthetic. Soft natural light entering, refined editorial atmosphere. Ultra-realistic 8k, sharp focus, natural fabric and skin texture. --ar 4:5. " + _IDENT_TRAIL,
+    },
+    "sn_clean_jumpsuit": {
+        "nome": "🤍 Editorial Sensual Clean",
+        "cat": "sensual", "locked": True,
+        "subject": "the woman",
+        "prompt": "Editorial fashion portrait of [subject], long wavy black hair, wearing white sleeveless high-neck jumpsuit, slightly shiny fabric with side cutouts and crossed straps at the hip. Three-quarter pose, one hand on waist and the other resting on the leg, slight hip tilt, direct gaze with confident expression. Elegant background: white framed wall, crystal chandelier in the back, vase of red roses on the floor, bare feet. Soft cinematic lighting with moderate contrast highlighting silhouette and fabric details. Sophisticated editorial fashion aesthetic, hyperrealistic, 8k, sharp focus. --ar 4:5. " + _IDENT_TRAIL,
+    },
+    "sn_high_impact": {
+        "nome": "🔥 High Impact Sensual Editorial",
+        "cat": "sensual", "locked": True,
+        "subject": "the woman",
+        "prompt": "Editorial fashion portrait of [subject], well-defined curvy silhouette, long wavy black hair flowing down the back, wearing tight white high-neck jumpsuit, slightly translucent satin-finish fabric with deep side cutouts and crossed straps along the hip contour. Three-quarter pose, one hand firm on waist and the other gliding lightly along thigh, hip projected to one side, confident provocative posture, intense direct gaze. Elegant environment: white framed wall, crystal chandelier, vase of red roses, contrast between classical setting and striking presence. Cinematic side soft light with marked highlights, shadows emphasizing silhouette and fabric texture. Slightly translucent fabric subtly revealing contours, natural skin glow, hyperrealistic detail. High-fashion editorial framing, focus on form attitude presence. Strong sensual sophisticated provocative atmosphere, bold fashion campaign style. 8k ultra realistic sharp focus cinematic color grading. --ar 4:5. " + _IDENT_TRAIL,
+    },
+    "sn_street_edge": {
+        "nome": "🎯 Street Edge Sensual",
+        "cat": "sensual", "locked": True,
+        "subject": "the woman",
+        "prompt": "Fashion/lifestyle portrait of [subject] with voluminous curly hair, wearing oversized red streetwear hoodie (no visible brand) combined with fitted bottom piece in light leopard texture print, following body curves naturally. Pose: side position with hip projected, well-marked body line, looking over shoulder with intense confident expression. Outfit interaction: hoodie slightly displaced by body movement, contrast between volume on top and fitted bottom. Modern apartment with large mirror in background, clean contemporary aesthetic. Side natural lighting with moderate contrast, shadows highlighting silhouette and contours. Realistic fabric and skin texture, natural shine, clear shape definition without exaggeration. Editorial framing with mirror presence for depth. Strong sensual marked atmosphere, modern street-fashion attitude. Ultra-realistic 8k sharp focus cinematic color grading. --ar 4:5. " + _IDENT_TRAIL,
+    },
+
+    # ▼ Marca os estilos PREMIUM existentes como locked (motivar compra)
+    # NOTA: estes estão definidos acima sem 'locked', vamos adicionar via _LOCKED_KEYS abaixo
 }
+
+
+# Lista de chaves de estilos PREMIUM existentes que devem aparecer trancados 🔒
+# (separado para permitir override fácil sem editar cada dict)
+_LOCKED_PREMIUM_KEYS = {
+    "men_underwater", "men_darkhero",  # Men premium
+    "u_lion_winter", "u_lion_desert", "u_lion_shadow",  # Lion trilogy
+    "u_phone_spotify", "u_phone_neon", "u_phone_apple", "u_phone_street",  # Phone series
+    "u_nw_warrior", "u_nw_pulse", "u_nw_arcane",  # Neon warrior
+    "u_he_cine",  # Hero frame
+    "x_a_p1", "x_a_p2",  # Comic story 1 — Sombras
+    "x_b_p1", "x_b_p2", "x_b_p3", "x_b_p4", "x_b_p5",  # Comic story 2 — Jornada
+    "co_polaroid_classic", "co_polaroid_romantic", "co_polaroid_playful",  # Couples
+}
+# Aplicar locked=True aos estilos premium acima (e os ja com 'locked': True ficam)
+for _k in _LOCKED_PREMIUM_KEYS:
+    if _k in PADRAO_STYLES:
+        PADRAO_STYLES[_k]["locked"] = True
+del _k
 
 
 # Sub-grupos da categoria Unissex (para evitar 1 mega-lista)
@@ -1654,6 +1865,9 @@ PADRAO_UNISEX_GROUPS = {
     "submerged": {"nome": "👁️ Olhar Submerso"},
     "vintage":   {"nome": "🍂 Vintage Beetle"},
     "hero":      {"nome": "🦸 Hero Frame"},
+    "lifestyle": {"nome": "☕ Lifestyle Editorial"},
+    "epic":      {"nome": "🎬 Editorial Premium"},
+    "scifi":     {"nome": "🔬 Sci-Fi / Cyber"},
 }
 
 
@@ -1692,17 +1906,153 @@ def build_padrao_final_prompt(style_key, user_caption=""):
     return base
 
 
+# ==================== SISTEMA DE ACESSO PREMIUM (Sensual + Premium locks) ====================
+# Plano: 2 estilos sensuais ficam livres. Resto + estilos premium ficam 🔒
+# Desbloqueado quando o user faz a 1ª compra de créditos (qualquer pacote).
+# Nessa altura, fica unlocked PERMANENTE para todos os estilos atuais e
+# tem +30 dias para receber novos estilos lançados depois.
+# Após 30d: nova compra renova os 30 dias para os novos estilos.
+
+PREMIUM_ACCESS_FILE = "premium_access.json"
+PREMIUM_ACCESS_LOCK = Lock()
+ADMIN_PREMIUM_BLOCK_FILE = "admin_premium_block.json"  # admins secundários trancados
+ADMIN_PREMIUM_BLOCK_LOCK = Lock()
+
+# Estilos sensuais SEMPRE livres (sem 🔒)
+FREE_SENSUAL_KEYS = {"sn_postshower", "sn_bedroom"}
+
+
+def is_style_locked(style_key):
+    """True se o estilo tem flag locked=True nas suas definições."""
+    st = PADRAO_STYLES.get(style_key)
+    if not st:
+        return False
+    return bool(st.get("locked"))
+
+
+def grant_premium_access(user_id, snapshot_keys=None):
+    """Concede acesso premium ao user. Guarda snapshot dos estilos atuais e
+    janela de 30 dias para novos estilos.
+    Idempotente: se já existir, atualiza updates_until (renova 30d) e adiciona
+    novos estilos ao snapshot."""
+    data = load_json(PREMIUM_ACCESS_FILE)
+    uid = str(user_id)
+    now = datetime.now()
+    new_updates_until = (now + timedelta(days=30)).isoformat()
+    if snapshot_keys is None:
+        # Tudo o que está locked AGORA fica disponível para o user
+        snapshot_keys = [k for k, v in PADRAO_STYLES.items() if v.get("locked")]
+
+    if uid not in data:
+        data[uid] = {
+            "unlocked_at": now.isoformat(),
+            "updates_until": new_updates_until,
+            "base_keys": list(snapshot_keys),
+        }
+    else:
+        # Renova janela de 30d e adiciona quaisquer estilos que entretanto apareceram
+        data[uid]["updates_until"] = new_updates_until
+        existing = set(data[uid].get("base_keys", []))
+        existing.update(snapshot_keys)
+        data[uid]["base_keys"] = sorted(existing)
+
+    save_json(PREMIUM_ACCESS_FILE, data, PREMIUM_ACCESS_LOCK)
+    logger.info(f"Premium access granted/renewed for user {user_id}")
+
+
+def has_premium_access(user_id, style_key):
+    """Verifica se o user tem acesso ao estilo (ignorando o lock).
+    Regras:
+      - SUPER admin (principal) = sempre acesso total
+      - Admin secundário: acesso a não ser que esteja na lista de bloqueio
+      - VIP: acesso total
+      - User com premium ativo: tem acesso aos estilos do snapshot dele +
+        novos estilos enquanto updates_until > now
+      - Senão: sem acesso
+    """
+    # 1) Super admin (principal) — sempre tem tudo
+    if is_super_admin(user_id):
+        return True
+
+    # 2) Admin secundário — tem por padrão, mas super admin pode trancar individualmente
+    if is_any_admin(user_id):
+        block_data = load_json(ADMIN_PREMIUM_BLOCK_FILE)
+        if str(user_id) not in block_data:
+            return True
+        # caso esteja trancado, segue para regras normais
+
+    # 3) VIPs sempre desbloqueados
+    if is_vip(user_id):
+        return True
+
+    # 4) Premium adquirido?
+    data = load_json(PREMIUM_ACCESS_FILE)
+    entry = data.get(str(user_id))
+    if not entry:
+        return False
+
+    # Estilo está no snapshot original do user?
+    if style_key in (entry.get("base_keys") or []):
+        return True
+
+    # Estilo é novo (lançado depois) → só se ainda dentro dos 30 dias
+    try:
+        upd = datetime.fromisoformat(entry.get("updates_until", ""))
+        if datetime.now() <= upd:
+            # Adiciona automaticamente ao snapshot do user para reuso futuro
+            entry.setdefault("base_keys", []).append(style_key)
+            save_json(PREMIUM_ACCESS_FILE, data, PREMIUM_ACCESS_LOCK)
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def is_locked_for_user(user_id, style_key):
+    """Conveniência: True se este estilo deve aparecer 🔒 trancado para este user."""
+    if not is_style_locked(style_key):
+        return False
+    if style_key in FREE_SENSUAL_KEYS:
+        return False
+    return not has_premium_access(user_id, style_key)
+
+
+def admin_toggle_secondary_premium_block(user_id, blocked):
+    """Super admin tranca (blocked=True) ou destranca (blocked=False) acesso premium
+    de um admin secundário."""
+    data = load_json(ADMIN_PREMIUM_BLOCK_FILE)
+    uid = str(user_id)
+    if blocked:
+        data[uid] = {"blocked_at": datetime.now().isoformat()}
+    else:
+        data.pop(uid, None)
+    save_json(ADMIN_PREMIUM_BLOCK_FILE, data, ADMIN_PREMIUM_BLOCK_LOCK)
+
+
+def is_secondary_admin_blocked(user_id):
+    return str(user_id) in load_json(ADMIN_PREMIUM_BLOCK_FILE)
+
+
+
+
+
 # ==================== GALLERY PROMPT CACHE (Ver Prompt no canal) ====================
 GALLERY_PROMPTS_FILE = "gallery_prompts.json"
 GALLERY_PROMPTS_LOCK = Lock()
 
 
-def save_gallery_prompt(prompt_text):
-    """Guarda o prompt completo associado a um ID curto. Retorna o ID."""
+def save_gallery_prompt(prompt_text, style_key=None):
+    """Guarda o prompt completo associado a um ID curto. Retorna o ID.
+    Se style_key pertencer a um estilo locked, marca o entry como locked
+    (para o botão 🔒 Prompt Premium / waitlist do eBook)."""
     pid = secrets.token_urlsafe(6)  # ~8 chars
     data = load_json(GALLERY_PROMPTS_FILE)
+    locked = bool(style_key and is_style_locked(style_key))
     data[pid] = {
         "prompt": prompt_text,
+        "style_key": style_key,
+        "locked": locked,
         "timestamp": datetime.now().isoformat()
     }
     # Mantém só os 5000 mais recentes para não inflacionar
@@ -1713,12 +2063,50 @@ def save_gallery_prompt(prompt_text):
     return pid
 
 
+def get_gallery_prompt_entry(pid):
+    """Versão completa que devolve o entry inteiro (prompt + locked + style_key)."""
+    if not pid:
+        return None
+    data = load_json(GALLERY_PROMPTS_FILE)
+    return data.get(pid)
+
+
 def get_gallery_prompt(pid):
     data = load_json(GALLERY_PROMPTS_FILE)
     entry = data.get(pid)
     if not entry:
         return None
     return entry.get("prompt")
+
+
+# ==================== eBOOK WAITLIST ====================
+EBOOK_WAITLIST_FILE = "ebook_waitlist.json"
+EBOOK_WAITLIST_LOCK = Lock()
+
+
+def add_to_ebook_waitlist(user_id, lang="pt"):
+    """Regista user_id na lista de espera do eBook 'Remake Pixel Prompt Vault'.
+    Idempotente — se já existir, atualiza só timestamp."""
+    data = load_json(EBOOK_WAITLIST_FILE)
+    uid = str(user_id)
+    is_new = uid not in data
+    data[uid] = {
+        "lang": lang,
+        "joined_at": datetime.now().isoformat() if is_new else data[uid].get("joined_at"),
+        "updated_at": datetime.now().isoformat(),
+    }
+    save_json(EBOOK_WAITLIST_FILE, data, EBOOK_WAITLIST_LOCK)
+    return is_new
+
+
+def get_ebook_waitlist_count():
+    return len(load_json(EBOOK_WAITLIST_FILE))
+
+
+def get_ebook_waitlist_users():
+    """Devolve lista de (user_id, lang) tuples — útil para broadcast admin."""
+    data = load_json(EBOOK_WAITLIST_FILE)
+    return [(int(uid), v.get("lang", "pt")) for uid, v in data.items()]
 
 
 # ==================== STYLE PREVIEWS (auto-coleta da galeria) ====================
@@ -3613,15 +4001,21 @@ def callback_gallery(call):
     cta = cta_texts.get(lang, cta_texts["pt"]).format(u=BOT_USERNAME)
     caption = f"✨ <i>{prompt_text}</i>\n\n{cta}" if prompt_text else cta
 
-    # Guarda o prompt completo (não truncado) para o botão "📋 Ver Prompt"
+    # Guarda o prompt completo (não truncado) para o botão "📋 Ver Prompt".
+    # Se este creation foi feito com um estilo locked, o botão muda para "🔒 Prompt Premium"
     full_prompt = creation.get("prompt") or ""
-    prompt_id = save_gallery_prompt(full_prompt) if full_prompt else None
+    style_key_for_creation = get_style_for_creation(creation_id)
+    is_locked_creation = bool(style_key_for_creation and is_style_locked(style_key_for_creation))
+    prompt_id = save_gallery_prompt(full_prompt, style_key=style_key_for_creation) if full_prompt else None
 
-    # Botões inline: "Criar o meu →" + "📋 Ver Prompt"
+    # Botões inline: "Criar o meu →" + ("📋 Ver Prompt" OU "🔒 Prompt Premium")
     ikm = telebot.types.InlineKeyboardMarkup(row_width=2)
     ikm.add(telebot.types.InlineKeyboardButton("🤖 Criar o meu →", url=f"https://t.me/{BOT_USERNAME}"))
     if prompt_id:
-        ikm.add(telebot.types.InlineKeyboardButton("📋 Ver Prompt", callback_data=f"vp_{prompt_id}"))
+        if is_locked_creation:
+            ikm.add(telebot.types.InlineKeyboardButton("🔒 Prompt Premium", callback_data=f"vp_{prompt_id}"))
+        else:
+            ikm.add(telebot.types.InlineKeyboardButton("📋 Ver Prompt", callback_data=f"vp_{prompt_id}"))
 
     try:
         # Descarrega imagem e envia para o canal
@@ -3673,19 +4067,69 @@ def callback_gallery(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('vp_'))
 def callback_view_prompt(call):
-    """Handler do botão '📋 Ver Prompt' do canal da galeria.
-    Envia o prompt completo em DM (formato copy-friendly)."""
+    """Handler do botão '📋 Ver Prompt' / '🔒 Prompt Premium' do canal da galeria."""
     user_id = call.from_user.id
+    lang = get_user_lang(user_id) or "pt"
     pid = call.data.replace('vp_', '')
-    full_prompt = get_gallery_prompt(pid)
+    entry = get_gallery_prompt_entry(pid)
 
-    if not full_prompt:
+    if not entry:
         bot.answer_callback_query(call.id, "❌ Prompt não encontrado ou expirou.", show_alert=True)
         return
 
-    # Mensagem com o prompt em <code> para copiar fácil
+    full_prompt = entry.get("prompt") or ""
+    is_locked_prompt = bool(entry.get("locked"))
+
+    # Se for de estilo PREMIUM (locked) → mostra CTA com waitlist do eBook
+    if is_locked_prompt:
+        msg_l = {
+            "pt": ("🔒 <b>Prompt Premium</b>\n\n"
+                   "Este prompt faz parte da coleção exclusiva do <b>Modelo Padrão Premium</b>.\n\n"
+                   "🎨 <b>Para usares este estilo no bot:</b>\n"
+                   f"Faz qualquer compra de créditos em @{BOT_USERNAME} e desbloqueias <b>todos os 37+ estilos premium</b>, incluindo a categoria 🔥 Sensual.\n\n"
+                   "📖 <b>Para teres o prompt completo:</b>\n"
+                   "Estamos a preparar o eBook <b>Remake Pixel Prompt Vault</b> 📚 — uma compilação dos prompts dos estilos premium para usares onde quiseres (Midjourney, ChatGPT, FLUX, etc.).\n\n"
+                   "👇 Clica em <b>🔔 Avisar-me</b> para entrares na lista de espera (vais receber notificação grátis quando o eBook lançar)."),
+            "en": ("🔒 <b>Premium Prompt</b>\n\n"
+                   "This prompt is part of the exclusive <b>Standard Model Premium</b> collection.\n\n"
+                   "🎨 <b>To use this style in the bot:</b>\n"
+                   f"Make any credit purchase at @{BOT_USERNAME} and unlock <b>all 37+ premium styles</b>, including 🔥 Sensual.\n\n"
+                   "📖 <b>To get the full prompt:</b>\n"
+                   "We're preparing the eBook <b>Remake Pixel Prompt Vault</b> 📚 — a compilation of premium-style prompts to use anywhere (Midjourney, ChatGPT, FLUX, etc.).\n\n"
+                   "👇 Tap <b>🔔 Notify me</b> to join the waitlist (free notification when it launches)."),
+            "es": ("🔒 <b>Prompt Premium</b>\n\n"
+                   "Este prompt es parte de la colección <b>Modelo Estándar Premium</b>.\n\n"
+                   "🎨 <b>Para usar este estilo en el bot:</b>\n"
+                   f"Haz cualquier compra de créditos en @{BOT_USERNAME} y desbloquea <b>todos los estilos premium</b>.\n\n"
+                   "📖 <b>Para tener el prompt completo:</b>\n"
+                   "Estamos preparando el eBook <b>Remake Pixel Prompt Vault</b> 📚.\n\n"
+                   "👇 Toca <b>🔔 Avisarme</b> para entrar en la lista de espera."),
+        }
+        notify_label = {"pt": "🔔 Avisar-me quando lançar", "en": "🔔 Notify me at launch", "es": "🔔 Avisarme al lanzar"}
+        bot_label = {"pt": "🤖 Abrir o bot", "en": "🤖 Open the bot", "es": "🤖 Abrir el bot"}
+        mk = telebot.types.InlineKeyboardMarkup(row_width=1)
+        mk.add(telebot.types.InlineKeyboardButton(notify_label.get(lang, notify_label["pt"]), callback_data="ebook_join"))
+        mk.add(telebot.types.InlineKeyboardButton(bot_label.get(lang, bot_label["pt"]), url=f"https://t.me/{BOT_USERNAME}"))
+        try:
+            bot.send_message(user_id, msg_l.get(lang, msg_l["pt"]), reply_markup=mk, parse_mode='HTML')
+            bot.answer_callback_query(call.id, "📩 Detalhes enviados em DM!")
+        except Exception:
+            try:
+                bot.answer_callback_query(
+                    call.id,
+                    f"⚠️ Inicia primeiro o bot @{BOT_USERNAME} e clica novamente.",
+                    show_alert=True
+                )
+            except Exception:
+                pass
+        return
+
+    # Estilo desbloqueado / sem estilo → revela prompt completo (comportamento original)
+    if not full_prompt:
+        bot.answer_callback_query(call.id, "❌ Prompt vazio.", show_alert=True)
+        return
+
     header = "📋 <b>Prompt completo desta imagem</b>\n\n<i>Copia e cola para reutilizar no @" + BOT_USERNAME + "</i>\n\n"
-    # Telegram limit ~4096 chars por msg; partir se necessário
     body = full_prompt
     msg = header + "<code>" + (body.replace("<", "&lt;").replace(">", "&gt;")[:3500]) + "</code>"
 
@@ -3693,7 +4137,6 @@ def callback_view_prompt(call):
         bot.send_message(user_id, msg, parse_mode='HTML')
         bot.answer_callback_query(call.id, "📩 Prompt enviado em DM!")
     except Exception:
-        # User não iniciou o bot ou bloqueou
         try:
             bot.answer_callback_query(
                 call.id,
@@ -3702,6 +4145,32 @@ def callback_view_prompt(call):
             )
         except Exception:
             pass
+
+
+@bot.callback_query_handler(func=lambda call: call.data == 'ebook_join')
+def callback_ebook_join(call):
+    """Adiciona user à waitlist do eBook 'Remake Pixel Prompt Vault'."""
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id) or "pt"
+    is_new = add_to_ebook_waitlist(user_id, lang)
+    msg = {
+        "pt": ("✅ Estás na lista de espera do <b>Remake Pixel Prompt Vault</b>! 📚\n\n"
+               "🔔 Vais receber uma notificação assim que o eBook estiver disponível.\n"
+               "🎁 Os primeiros da lista terão desconto de lançamento.") if is_new else
+              "✅ Já estavas na lista! Vais ser notificado no lançamento. 🔔",
+        "en": ("✅ You're on the <b>Remake Pixel Prompt Vault</b> waitlist! 📚\n\n"
+               "🔔 You'll get a free notification when the eBook is ready.\n"
+               "🎁 First on the list = launch discount.") if is_new else
+              "✅ Already on the list! You'll be notified. 🔔",
+        "es": ("✅ Estás en la lista de espera del <b>Remake Pixel Prompt Vault</b>! 📚\n"
+               "🔔 Te avisaremos al lanzar.") if is_new else
+              "✅ Ya estabas en la lista. Te avisaremos. 🔔",
+    }
+    try:
+        bot.answer_callback_query(call.id, "🔔 Adicionado à lista!" if is_new else "✅ Já estavas registado.", show_alert=False)
+        bot.send_message(user_id, msg.get(lang, msg["pt"]), parse_mode='HTML')
+    except Exception:
+        pass
 
 
 
@@ -4256,7 +4725,8 @@ def callback_admin_panel(call):
             msg += "<i>Nenhum admin secundario adicionado.</i>\n\n"
         
         msg += "➕ Para adicionar: encaminhe uma mensagem do usuario e depois use o botao abaixo\n"
-        msg += "Ou use: <code>/addadmin ID_DO_USUARIO</code>"
+        msg += "Ou use: <code>/addadmin ID_DO_USUARIO</code>\n\n"
+        msg += "🔒 <b>Trancar/Destrancar Premium:</b> controla se cada admin secundário tem acesso aos estilos sensuais e premium do Modelo Padrão. Tu (super admin) tens sempre acesso total."
         
         markup = telebot.types.InlineKeyboardMarkup(row_width=1)
         markup.add(
@@ -4265,8 +4735,16 @@ def callback_admin_panel(call):
         if secondary:
             for uid in secondary:
                 info = secondary[uid]
+                # Estado do acesso premium do admin secundário
+                is_blocked = is_secondary_admin_blocked(uid)
+                lock_emoji = "🔒" if is_blocked else "🔓"
+                lock_action = "unlock" if is_blocked else "lock"
+                lock_label = f"{lock_emoji} {'Destrancar' if is_blocked else 'Trancar'} Premium {info.get('name', uid)}"
                 markup.add(
-                    telebot.types.InlineKeyboardButton(f"🗑️ Remover {info.get('name', uid)}", callback_data=f"admin_remove_{uid}")
+                    telebot.types.InlineKeyboardButton(f"🗑️ Remover {info.get('name', uid)}", callback_data=f"admin_remove_{uid}"),
+                )
+                markup.add(
+                    telebot.types.InlineKeyboardButton(lock_label, callback_data=f"admin_premlock_{lock_action}_{uid}")
                 )
         markup.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_panel"))
         
@@ -4299,6 +4777,34 @@ def callback_admin_panel(call):
         markup.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_manage_admins"))
         bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=markup)
     
+    elif action.startswith("premlock_"):
+        # Super admin tranca/destranca premium de admin secundário
+        if not is_super_admin(user_id):
+            bot.answer_callback_query(call.id, "Apenas o admin principal!")
+            return
+        parts = action.replace("premlock_", "").split("_", 1)
+        if len(parts) != 2:
+            return
+        sub_action, target_uid = parts
+        try:
+            target_id = int(target_uid)
+        except Exception:
+            return
+        block = (sub_action == "lock")
+        admin_toggle_secondary_premium_block(target_id, block)
+        bot.answer_callback_query(
+            call.id,
+            f"{'🔒 Trancado' if block else '🔓 Destrancado'}: admin {target_id}",
+            show_alert=False
+        )
+        # Re-render painel chamando manage_admins
+        try:
+            new_call = call
+            new_call.data = "admin_manage_admins"
+            callback_admin_panel(new_call)
+        except Exception:
+            pass
+
     elif action == "toggle_pause":
         # 🆕 Pausar/Despausar Bot
         global bot_paused, pause_message
@@ -5055,6 +5561,51 @@ def cmd_creditos(message):
     bot.send_message(message.chat.id, f"💳 <code>{creditos}</code> créditos", parse_mode='HTML')
 
 
+@bot.message_handler(commands=['ebook_waitlist', 'ebook_lista'])
+def cmd_ebook_waitlist(message):
+    """Admin: ver tamanho/estatísticas da waitlist do eBook."""
+    user_id = message.from_user.id
+    if not is_any_admin(user_id):
+        return
+    count = get_ebook_waitlist_count()
+    bot.send_message(message.chat.id,
+                     f"📚 <b>Lista de espera — Remake Pixel Prompt Vault</b>\n\n"
+                     f"🔔 <b>{count}</b> users registados.\n\n"
+                     f"Para fazer broadcast quando lançares: <code>/ebook_broadcast &lt;mensagem&gt;</code>\n"
+                     f"Exemplo: <code>/ebook_broadcast O eBook está disponível! Compra com 30% desconto: https://...</code>",
+                     parse_mode='HTML')
+
+
+@bot.message_handler(commands=['ebook_broadcast'])
+def cmd_ebook_broadcast(message):
+    """Super admin: faz broadcast da mensagem a toda a waitlist do eBook."""
+    user_id = message.from_user.id
+    if not is_super_admin(user_id):
+        bot.reply_to(message, "❌ Apenas super admin.")
+        return
+    text = message.text.replace("/ebook_broadcast", "", 1).strip()
+    if not text:
+        bot.reply_to(message, "Uso: <code>/ebook_broadcast &lt;mensagem para todos&gt;</code>", parse_mode='HTML')
+        return
+    users = get_ebook_waitlist_users()
+    if not users:
+        bot.reply_to(message, "📭 Lista de espera vazia.")
+        return
+    bot.reply_to(message, f"📤 A enviar para {len(users)} users... aguarda.")
+    ok, fail = 0, 0
+    body = f"📚 <b>Remake Pixel Prompt Vault</b>\n\n{text}"
+    for uid, _lang in users:
+        try:
+            bot.send_message(uid, body, parse_mode='HTML', disable_web_page_preview=False)
+            ok += 1
+            time.sleep(0.05)  # respeita rate-limit
+        except Exception:
+            fail += 1
+    bot.send_message(message.chat.id, f"✅ Broadcast concluído: {ok} entregue / {fail} falhas.")
+
+
+
+
 @bot.message_handler(commands=['estilos', 'styles', 'catalogo'])
 def cmd_estilos(message):
     """Mostra o catálogo de estilos do Modelo Padrão (com previews reais coletadas da galeria)."""
@@ -5074,11 +5625,14 @@ def cmd_estilos(message):
     mk = telebot.types.InlineKeyboardMarkup(row_width=1)
     cats = {
         "pt": [("👨 Para Homens", "men"), ("👩 Para Mulheres", "women"), ("👤 Unissex", "unisex"),
-               ("📋 Flyers Recrutamento", "flyer"), ("💑 Casais", "couple"), ("📚 Comics / Histórias", "comic")],
+               ("📋 Flyers Recrutamento", "flyer"), ("💑 Casais", "couple"), ("📚 Comics / Histórias", "comic"),
+               ("📱 Posts Instagram", "stories"), ("🔥 Sensual", "sensual")],
         "en": [("👨 For Men", "men"), ("👩 For Women", "women"), ("👤 Unisex", "unisex"),
-               ("📋 Recruitment Flyers", "flyer"), ("💑 Couples", "couple"), ("📚 Comics / Stories", "comic")],
+               ("📋 Recruitment Flyers", "flyer"), ("💑 Couples", "couple"), ("📚 Comics / Stories", "comic"),
+               ("📱 Instagram Posts", "stories"), ("🔥 Sensual", "sensual")],
         "es": [("👨 Para Hombres", "men"), ("👩 Para Mujeres", "women"), ("👤 Unisex", "unisex"),
-               ("📋 Flyers Reclutamiento", "flyer"), ("💑 Parejas", "couple"), ("📚 Comics / Historias", "comic")],
+               ("📋 Flyers Reclutamiento", "flyer"), ("💑 Parejas", "couple"), ("📚 Comics / Historias", "comic"),
+               ("📱 Posts Instagram", "stories"), ("🔥 Sensual", "sensual")],
     }
     # Conta quantos estilos por categoria + quantos têm preview
     previews = load_json(STYLE_PREVIEWS_FILE)
@@ -5161,6 +5715,8 @@ def callback_estilos(call):
             "flyer":   {"pt": "📋 <b>Flyers Recrutamento</b>", "en": "📋 <b>Recruitment Flyers</b>", "es": "📋 <b>Flyers Reclutamiento</b>"},
             "couple":  {"pt": "💑 <b>Casais</b>", "en": "💑 <b>Couples</b>", "es": "💑 <b>Parejas</b>"},
             "comic":   {"pt": "📚 <b>Comics / Histórias</b>", "en": "📚 <b>Comics / Stories</b>", "es": "📚 <b>Comics / Historias</b>"},
+            "stories": {"pt": "📱 <b>Posts Instagram</b>", "en": "📱 <b>Instagram Posts</b>", "es": "📱 <b>Posts Instagram</b>"},
+            "sensual": {"pt": "🔥 <b>Sensual</b>", "en": "🔥 <b>Sensual</b>", "es": "🔥 <b>Sensual</b>"},
         }
         title = titles.get(cat, titles["men"]).get(lang, titles.get(cat, titles["men"])["pt"])
         legend = {
@@ -7261,14 +7817,17 @@ def _padrao_categories_markup(lang):
         "pt": [("👨 Para Homens", "padcat_men"), ("👩 Para Mulheres", "padcat_women"),
                ("👤 Unissex", "padcat_unisex"), ("📋 Flyers Recrutamento", "padcat_flyer"),
                ("💑 Casais (envia 2 fotos)", "padcat_couple"), ("📚 Comics / Histórias", "padcat_comic"),
+               ("📱 Posts Instagram", "padcat_stories"), ("🔥 Sensual", "padcat_sensual"),
                ("⬅️ Voltar", "padflow_back")],
         "en": [("👨 For Men", "padcat_men"), ("👩 For Women", "padcat_women"),
                ("👤 Unisex", "padcat_unisex"), ("📋 Recruitment Flyers", "padcat_flyer"),
                ("💑 Couples (send 2 photos)", "padcat_couple"), ("📚 Comics / Stories", "padcat_comic"),
+               ("📱 Instagram Posts", "padcat_stories"), ("🔥 Sensual", "padcat_sensual"),
                ("⬅️ Back", "padflow_back")],
         "es": [("👨 Para Hombres", "padcat_men"), ("👩 Para Mujeres", "padcat_women"),
                ("👤 Unisex", "padcat_unisex"), ("📋 Flyers Reclutamiento", "padcat_flyer"),
                ("💑 Parejas (envía 2 fotos)", "padcat_couple"), ("📚 Comics / Historias", "padcat_comic"),
+               ("📱 Posts Instagram", "padcat_stories"), ("🔥 Sensual", "padcat_sensual"),
                ("⬅️ Volver", "padflow_back")],
     }
     items = cat_texts.get(lang, cat_texts["pt"])
@@ -7278,7 +7837,7 @@ def _padrao_categories_markup(lang):
     return mk
 
 
-def _padrao_styles_markup_for_cat(cat, lang):
+def _padrao_styles_markup_for_cat(cat, lang, user_id=None):
     mk = telebot.types.InlineKeyboardMarkup(row_width=1)
     if cat == "unisex":
         for grp_key, grp in PADRAO_UNISEX_GROUPS.items():
@@ -7290,7 +7849,8 @@ def _padrao_styles_markup_for_cat(cat, lang):
     else:
         for key, st in PADRAO_STYLES.items():
             if st.get("cat") == cat:
-                mk.add(telebot.types.InlineKeyboardButton(st["nome"], callback_data=f"padst_{key}"))
+                lock_prefix = "🔒 " if (user_id and is_locked_for_user(user_id, key)) else ""
+                mk.add(telebot.types.InlineKeyboardButton(f"{lock_prefix}{st['nome']}", callback_data=f"padst_{key}"))
     back_label = {"pt": "⬅️ Voltar", "en": "⬅️ Back", "es": "⬅️ Volver"}.get(lang, "⬅️ Voltar")
     mk.add(telebot.types.InlineKeyboardButton(back_label, callback_data="padflow_styles"))
     return mk
@@ -7412,15 +7972,17 @@ def callback_padcat(call):
             "unisex":  {"pt": "👤 <b>Unissex</b>\n\nEscolhe o tema:", "en": "👤 <b>Unisex</b>\n\nPick a theme:", "es": "👤 <b>Unisex</b>\n\nElige el tema:"},
             "flyer":   {"pt": "📋 <b>Flyers Recrutamento</b>\n\nEscolhe o flyer:", "en": "📋 <b>Recruitment Flyers</b>\n\nPick the flyer:", "es": "📋 <b>Flyers Reclutamiento</b>\n\nElige el flyer:"},
             "comic":   {"pt": "📚 <b>Comics / Histórias</b>\n\nEscolhe a história:", "en": "📚 <b>Comics / Stories</b>\n\nPick the story:", "es": "📚 <b>Comics / Historias</b>\n\nElige la historia:"},
+            "stories": {"pt": "📱 <b>Posts Instagram</b>\n\nEscolhe o post:", "en": "📱 <b>Instagram Posts</b>\n\nPick the post:", "es": "📱 <b>Posts Instagram</b>\n\nElige el post:"},
+            "sensual": {"pt": "🔥 <b>Sensual</b>\n\n2 estilos grátis · resto trancado 🔒\n💎 Faz qualquer compra para desbloqueares todos.", "en": "🔥 <b>Sensual</b>\n\n2 free styles · rest locked 🔒\n💎 Make any purchase to unlock all.", "es": "🔥 <b>Sensual</b>\n\n2 estilos gratis · resto bloqueado 🔒\n💎 Haz cualquier compra para desbloquear."},
         }
         title = titles.get(cat, titles["men"]).get(lang, titles.get(cat, titles["men"])["pt"])
 
     try:
         bot.edit_message_text(title, call.message.chat.id, call.message.message_id,
-                              reply_markup=_padrao_styles_markup_for_cat(cat, lang), parse_mode='HTML')
+                              reply_markup=_padrao_styles_markup_for_cat(cat, lang, user_id), parse_mode='HTML')
     except Exception:
         bot.send_message(call.message.chat.id, title,
-                         reply_markup=_padrao_styles_markup_for_cat(cat, lang), parse_mode='HTML')
+                         reply_markup=_padrao_styles_markup_for_cat(cat, lang, user_id), parse_mode='HTML')
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("padgrp_"))
@@ -7441,7 +8003,8 @@ def callback_padgrp(call):
     mk = telebot.types.InlineKeyboardMarkup(row_width=1)
     for key, st in PADRAO_STYLES.items():
         if st.get("cat") == "unisex" and st.get("grp") == grp_key:
-            mk.add(telebot.types.InlineKeyboardButton(st["nome"], callback_data=f"padst_{key}"))
+            lock_prefix = "🔒 " if is_locked_for_user(user_id, key) else ""
+            mk.add(telebot.types.InlineKeyboardButton(f"{lock_prefix}{st['nome']}", callback_data=f"padst_{key}"))
     back_label = {"pt": "⬅️ Voltar", "en": "⬅️ Back", "es": "⬅️ Volver"}.get(lang, "⬅️ Voltar")
     mk.add(telebot.types.InlineKeyboardButton(back_label, callback_data="padcat_unisex"))
 
@@ -7472,7 +8035,8 @@ def callback_padsto(call):
     for sk in story["scenes"]:
         st = PADRAO_STYLES.get(sk)
         if st:
-            mk.add(telebot.types.InlineKeyboardButton(st["nome"], callback_data=f"padst_{sk}"))
+            lock_prefix = "🔒 " if is_locked_for_user(user_id, sk) else ""
+            mk.add(telebot.types.InlineKeyboardButton(f"{lock_prefix}{st['nome']}", callback_data=f"padst_{sk}"))
     back_label = {"pt": "⬅️ Voltar", "en": "⬅️ Back", "es": "⬅️ Volver"}.get(lang, "⬅️ Voltar")
     mk.add(telebot.types.InlineKeyboardButton(back_label, callback_data=f"padcat_{story['cat']}"))
 
@@ -7503,6 +8067,34 @@ def callback_padst(call):
     style = PADRAO_STYLES.get(style_key)
     if not style:
         bot.answer_callback_query(call.id, "Estilo inválido.")
+        return
+
+    # 🔒 Bloqueio: estilo trancado e user sem premium
+    if is_locked_for_user(user_id, style_key):
+        paywall = {
+            "pt": ("🔒 <b>Estilo Premium</b>\n\n"
+                   "Este estilo está trancado.\n\n"
+                   "✨ <b>Como desbloquear:</b>\n"
+                   f"Faz qualquer compra de créditos (qualquer pacote) e desbloqueias automaticamente <b>todos os {sum(1 for k,v in PADRAO_STYLES.items() if v.get('locked'))}+ estilos trancados</b>, incluindo a categoria 🔥 Sensual.\n\n"
+                   "🎁 <b>Bónus:</b> 30 dias de acesso a novos estilos exclusivos lançados depois.\n\n"
+                   "👉 Clica em /comprar ou no menu 💰 Comprar Créditos."),
+            "en": ("🔒 <b>Premium Style</b>\n\n"
+                   "This style is locked.\n\n"
+                   "✨ <b>How to unlock:</b>\n"
+                   "Make any credit purchase (any pack) and you'll automatically unlock <b>all locked styles</b>, including 🔥 Sensual category.\n\n"
+                   "🎁 <b>Bonus:</b> 30 days of access to new exclusive styles released after.\n\n"
+                   "👉 Tap /comprar or 💰 Buy Credits."),
+            "es": ("🔒 <b>Estilo Premium</b>\n\n"
+                   "Este estilo está bloqueado.\n\n"
+                   "✨ Haz cualquier compra de créditos y desbloqueas <b>todos los estilos bloqueados</b>, incluyendo 🔥 Sensual.\n\n"
+                   "🎁 <b>Bono:</b> 30 días de acceso a estilos nuevos exclusivos.\n\n"
+                   "👉 /comprar"),
+        }
+        try:
+            bot.answer_callback_query(call.id, "🔒 Estilo Premium — faz uma compra para desbloquear.", show_alert=False)
+        except Exception:
+            pass
+        bot.send_message(call.message.chat.id, paywall.get(lang, paywall["pt"]), parse_mode='HTML')
         return
 
     if get_user_credits(user_id) < MODELO_PADRAO["custo"]:
