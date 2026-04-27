@@ -33,6 +33,7 @@ from logging.handlers import RotatingFileHandler
 import shutil
 import random
 import traceback
+import secrets
 
 # ==================== CONFIGURAÇÕES ====================
 SUPER_ADMIN_IDS = [6936852095]  # Admin principal - NUNCA pode ser removido
@@ -790,13 +791,13 @@ def get_user_credits(user_id):
     user_id_str = str(user_id)
     if user_id_str not in data:
         data[user_id_str] = {
-            "creditos": 15,
+            "creditos": 30,
             "total_usado": 0,
             "historico": [],
             "created_at": datetime.now().isoformat()
         }
         save_json(CREDITS_FILE, data, CREDITS_LOCK)
-        logger.info(f"Novo usuário {user_id} com 15 créditos")
+        logger.info(f"Novo usuário {user_id} com 30 créditos")
         
         # 🆕 NOTIFICAÇÃO INSTANTÂNEA
         try:
@@ -805,7 +806,7 @@ def get_user_credits(user_id):
                     admin_id,
                     f"🎉 <b>NOVO USUÁRIO!</b>\n\n"
                     f"👤 ID: <code>{user_id}</code>\n"
-                    f"💳 Créditos iniciais: 15\n"
+                    f"💳 Créditos iniciais: 30\n"
                     f"🕒 {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}",
                     parse_mode='HTML'
                 )
@@ -1079,14 +1080,14 @@ MODELO_PADRAO = {
     "nome": "🎨 Modelo Padrão",
     "desc": "Criação e edição de imagens (Grok)",
     "replicate_id": "xai/grok-imagine-image",
-    "custo": 3
+    "custo": 10
 }
 
 MODELO_PRO = {
     "nome": "✨ Modelo Pro",
     "desc": "Edição fotorrealista avançada (Qwen / FLUX.2 Klein 9B)",
     "replicate_id": "black-forest-labs/flux-2-klein-9b",
-    "custo": 5,
+    "custo": 18,
     "prompt_fixo": "make it more realistic"
 }
 
@@ -1109,8 +1110,673 @@ MODELO_ARTISTICO = {
     "nome": "🎭 Modelo Artistico",
     "desc": "Transforma fotos em diferentes estilos artisticos",
     "replicate_id": "black-forest-labs/flux-2-klein-9b",
-    "custo": 2
+    "custo": 13
 }
+
+
+# ==================== NOVOS PRESETS DE REALISMO ====================
+# Adicionados ao submenu "📷 Deixa mais realista" do Modelo Pro
+PRO_REALISM_EXTRA = {
+    "cinematic": {
+        "nome": "🔥 Realismo Cinematográfico",
+        "prompt": "Transform this photo into a cinematic masterpiece with hyper-realistic detail. Apply dramatic cinematic lighting with strong key light and soft fill, deep shadows, anamorphic lens flares, shallow depth of field, teal-and-orange color grading, film grain, 35mm cinematic look, ultra-sharp focus on the subject. Render the skin with realistic micro-texture, lifelike pores, natural subsurface scattering, accurate eye reflections and catchlights. Preserve the exact identity, facial structure, expression, pose, hairstyle, body proportions, framing, composition and camera angle of the original. Do not invent new features. The final result must look like a still frame from a high-budget Hollywood film, photorealistic, 8k, masterpiece."
+    },
+    "ultra_real": {
+        "nome": "🌟 Ultra Realista (Fotografia Profissional)",
+        "prompt": "Convert this image into ultra-photorealistic professional photography. Use a full-frame DSLR aesthetic, 85mm f/1.4 lens, perfect natural lighting, true-to-life colors, accurate white balance, razor-sharp focus on the eyes, ultra-detailed skin texture with realistic pores, fine hair strands, natural skin tones, lifelike eye reflections. Avoid plastic or AI-looking skin. Preserve identity, facial features, expression, age, pose, hairstyle, outfit, body proportions, framing and composition exactly as the reference. The result must look like a real photograph taken by a professional photographer, high resolution, 8k, masterpiece quality."
+    },
+    "iphone": {
+        "nome": "📸 Estilo iPhone / Selfie Natural",
+        "prompt": "Transform this photo to look like a natural high-quality smartphone selfie shot on a modern iPhone. Apply soft natural daylight, realistic skin tones, slight HDR, mild lens distortion typical of a front camera, natural ambient lighting, true-to-life colors, candid casual feel. Keep skin texture realistic with subtle pores and natural softness — never plastic or over-smoothed. Preserve identity, expression, pose, hairstyle, age and composition exactly. The result must look like a real, casual, authentic selfie/phone photo, photorealistic and believable, sharp but not over-processed."
+    },
+    "studio": {
+        "nome": "🖼️ Estilo Studio / Retrato Profissional",
+        "prompt": "Transform this image into a professional studio portrait. Apply soft three-point studio lighting with a large key softbox, gentle fill, subtle rim/hair light, clean seamless backdrop, perfectly balanced exposure, gentle catchlights in the eyes, beautifully sharp focus on the face. Render skin with high-end retouching realism: natural pores, smooth but not plastic texture, perfect color grading, magazine-quality finish. Preserve identity, facial structure, expression, age, pose, hairstyle, outfit, framing and composition exactly as the reference. The result must look like a high-end editorial studio portrait shot by a top photographer, photorealistic, 8k, masterpiece."
+    },
+}
+
+
+# ==================== ESTILO & HUMOR (PRO) ====================
+PRO_STYLE_MOOD = {
+    "smile": {
+        "nome": "😊 Sorriso Natural",
+        "prompt": "Adjust the subject's expression to a warm, natural, genuine smile with soft eye crinkle (Duchenne smile). Slightly lift the corners of the mouth, show a hint of teeth naturally, relaxed eyes, friendly warm vibe, authentic and effortless feel. Keep skin texture realistic, photorealistic rendering. Preserve identity, facial structure, age, hairstyle, pose, body, framing, lighting and composition exactly as the reference. The result must look like a real photograph with a believable, natural smile, ultra-detailed, 8k, professional photography quality."
+    },
+    "seductive": {
+        "nome": "😉 Olhar Sedutor / Confiante",
+        "prompt": "Adjust the subject's expression to a confident, subtly seductive look. Slight smolder, softly parted lips, relaxed jaw, intense focused gaze toward the camera, one eyebrow very slightly raised, calm self-assured energy. Keep it elegant and tasteful, never exaggerated. Preserve identity, facial structure, age, hairstyle, pose, body proportions, outfit, lighting, framing and composition exactly. Photorealistic skin with realistic texture, sharp eyes with natural catchlights, high-end editorial quality, 8k, masterpiece."
+    },
+    "model": {
+        "nome": "😎 Pose de Modelo / Fashion",
+        "prompt": "Restyle this photo into a high-fashion model shot. Apply confident editorial pose energy, strong jawline emphasis, sharp cheekbones lighting, fashion magazine attitude, aloof and powerful expression, clean styling. Use high-end fashion photography lighting (Vogue / Harper's Bazaar style), professional color grading, ultra-sharp details, perfect skin texture, lifelike pores. Preserve identity, facial features, age, hairstyle, outfit, body proportions, framing and composition exactly. Photorealistic, 8k, masterpiece editorial quality."
+    },
+    "intense": {
+        "nome": "🔥 Expressão Intensa / Dramática",
+        "prompt": "Transform the subject's expression into an intense, dramatic look. Slightly furrowed brow, focused piercing gaze, lips closed or slightly tense, strong emotional presence, brooding cinematic energy. Apply dramatic chiaroscuro lighting with deep shadows and strong highlights, moody atmosphere, cinematic color grading. Keep skin photorealistic with natural texture and pores, sharp eyes with catchlights. Preserve identity, facial structure, age, hairstyle, pose, framing and composition exactly. 8k, ultra-detailed, masterpiece cinematic photography."
+    },
+    "romantic": {
+        "nome": "❤️ Vibe Romântica / Suave",
+        "prompt": "Restyle this photo with a soft, romantic and dreamy vibe. Apply warm golden-hour lighting, soft diffused glow, gentle bokeh, pastel romantic color grading, soft skin glow while keeping realistic pores and texture. The expression should be calm, soft, slightly smiling, eyes warm and tender. Preserve identity, facial structure, age, hairstyle, pose, outfit, framing and composition exactly. Photorealistic, lifelike, ultra-detailed, 8k, fine-art portrait quality."
+    },
+    "fun": {
+        "nome": "😂 Expressão Divertida / Memes",
+        "prompt": "Adjust the subject's expression to a fun, playful, slightly exaggerated meme-style look — laughing out loud, big genuine smile with visible teeth, eyes squinting from laughter or wide in surprise, energetic happy vibe, candid spontaneous feel. Keep it natural and authentic, not creepy. Vivid colors, sharp focus, photorealistic skin texture. Preserve identity, facial features, age, hairstyle, pose, outfit, framing and composition exactly. 8k, ultra-detailed, real photograph look."
+    },
+    "fullbody": {
+        "nome": "🕴️ Pose Full Body Profissional",
+        "prompt": "Restyle this image into a professional full-body editorial shot. If needed, extend the framing to show the entire body in a confident standing pose, weight on one leg, relaxed shoulders, hands placed naturally, strong posture, modeling stance. Apply professional studio or location lighting, balanced exposure, high-end fashion photography aesthetic, ultra-sharp focus, photorealistic skin and fabric textures. Preserve identity, facial features, age, hairstyle, outfit and overall look exactly as the reference. 8k, masterpiece editorial photography quality."
+    },
+}
+
+
+# ==================== ENHANCEMENTS AVANÇADOS (PRO) ====================
+PRO_ENHANCEMENTS = {
+    "lighting": {
+        "nome": "🔦 Melhorar Iluminação e Sombras",
+        "prompt": "Dramatically enhance the lighting and shadows of this image while preserving the subject exactly. Apply professional photography lighting: balanced key light, soft fill, subtle rim light, natural directional shadows, accurate light falloff, beautiful highlight rolloff, deep but detailed shadows, perfectly exposed midtones, cinematic atmosphere. Maintain the existing scene, mood and color palette but make the lighting look intentional, professional and three-dimensional. Preserve identity, facial features, expression, age, pose, hairstyle, outfit, framing and composition exactly. Photorealistic, ultra-detailed, 8k, masterpiece."
+    },
+    "skin_hair": {
+        "nome": "💇 Melhorar Cabelo, Pele e Textura",
+        "prompt": "Enhance the skin, hair and natural textures with photorealistic quality. Render skin with realistic pores, subtle micro-texture, natural subsurface scattering, healthy glow, even tone, no plastic/AI look. Render hair with individually defined strands, natural shine, realistic flow, accurate roots and ends, true-to-life color depth. Preserve identity, facial structure, age, expression, pose, hairstyle shape, outfit, lighting and composition exactly as the reference. The result must look like a high-end retouched professional portrait — refined but believable, never over-smoothed. 8k, ultra-detailed, masterpiece."
+    },
+    "outfit": {
+        "nome": "👔 Melhorar Roupa e Detalhes da Vestimenta",
+        "prompt": "Enhance the clothing and outfit details with photorealistic precision. Render fabric with accurate weave, realistic folds, natural drape, subtle wrinkles, true material textures (cotton, denim, leather, silk, knit, etc.), accurate stitching, buttons, zippers, logos and small details. Improve color depth, contrast and material finish for a high-end fashion look. Preserve the exact same outfit type, color, cut and style as the reference — do NOT change the clothes. Preserve identity, facial features, expression, age, hairstyle, pose, body proportions, framing, lighting and composition exactly. 8k, ultra-detailed, editorial fashion photography quality."
+    },
+    "color": {
+        "nome": "🌈 Cores Vibrantes e Correção de Cor",
+        "prompt": "Apply professional color grading and color correction. Boost color vibrancy without oversaturating, achieve perfectly balanced white balance, true-to-life skin tones, rich blacks, clean whites, beautiful tonal contrast, cinematic palette. Make colors pop with depth and harmony, like a professional photo edit in Lightroom/Capture One. Preserve identity, facial features, expression, age, pose, hairstyle, outfit, framing and composition exactly. Keep the scene realistic and the lighting natural. Photorealistic, 8k, ultra-detailed, masterpiece quality."
+    },
+    "eyes": {
+        "nome": "🧿 Olhos Mais Vivos e Expressivos",
+        "prompt": "Enhance the eyes with photorealistic detail and life. Render irises with rich color depth, fine radial fiber detail, natural variations, sharp pupils, beautiful clean catchlights matching the scene's lighting, realistic moisture and reflections, well-defined eyelashes, natural eyelid shape. Make the gaze feel alive, expressive and emotionally engaging while preserving the exact same eye color, eye shape and direction of look as the reference. Preserve identity, facial structure, expression, age, pose, hairstyle, outfit, framing and composition exactly. 8k, ultra-detailed, masterpiece portrait photography."
+    },
+    "max": {
+        "nome": "✨ Geral + Detalhes Máximos",
+        "prompt": "Apply a complete top-tier professional enhancement to this image. Maximize realism and detail across the entire photo: ultra-sharp focus, photorealistic skin with natural pores, lifelike hair with individual strands, expressive eyes with perfect catchlights, realistic fabric and outfit textures, professional cinematic lighting, accurate balanced color grading, deep tonal range, perfect exposure, fine micro-details everywhere, high dynamic range, magazine-cover finish. Preserve identity, facial features, expression, age, pose, hairstyle, outfit, framing and composition exactly. The final result must look like a flawless high-end professional photograph, photorealistic, 8k, ultra-detailed, masterpiece quality."
+    },
+}
+
+
+# ==================== ESTILOS DO MODELO PADRÃO (Grok) ====================
+# Estilos com prompt fixo aplicados quando o user envia foto + descrição
+# e clica em "🎨 Escolher Estilo" no Modelo Padrão.
+# {subject_token} é substituído pelo género de referência (the man / the woman / the person).
+# A descrição do user é anexada no fim como reforço.
+
+# Tag "preserve identity" usada como trailer comum
+_IDENT_TRAIL = "preserve identity, keep same face, keep facial structure, keep skin tone, maintain original identity, do not change person, realistic face consistency, preserve original facial expression, keep same emotion, keep same eye expression, keep same pose"
+
+
+PADRAO_STYLES = {
+    # ===== HOMENS (5) =====
+    "men_underwater": {
+        "nome": "🌊 Submerso Cinematográfico",
+        "cat": "men",
+        "subject": "the man",
+        "prompt": "Edit This close-up photograph of [subject] submerged underwater, half of the body exposed from chest to head, occupies the center frame. With a serious expression. Eyes open and directed towards the viewer. Appears shirtless. The water's surface, with its manipulated light, creates caustic patterns on the skin. Slightly suspended water droplets and bubbles add depth. Cinematic lighting with soft shadows and sharp highlights, and realistic textures create an intricate pattern of light and shadow on the face and upper body. The background is a color gradient between greenish-blue and dark blue, with scattered air bubbles, suggesting a deep environment. The lighting is diffused, casting soft shadows, enhancing the underwater atmosphere. The overall style of the image is photographic and realistic, with an emphasis on capturing the details of the water's effect on the person in 4k resolution, " + _IDENT_TRAIL,
+    },
+    "men_luxury": {
+        "nome": "🕶️ Luxury Glamour Dourado",
+        "cat": "men",
+        "subject": "the man",
+        "prompt": "Edit this image to show a [subject] positioned in a close-up portrait shot, face tilted slightly upward at approximately 15–20 degrees with the chin gently lifted, creating a confident, aspirational angle. The head is centered in the frame with the gaze directed straight toward the camera from behind the sunglasses. Wearing vintage-inspired round eye sunglasses with molten black-to-grey gradient lenses and matte black frames with delicate etched details, positioned perfectly on the bridge of the nose. The body is angled slightly (about 30 degrees) to create dimension, with shoulders relaxed and one shoulder subtly closer to the camera. Exuding magnetic confidence with a sultry pout. Wearing a luxurious black blazer. The background is a rich, saturated golden-yellow that transitions to deeper amber tones at the edges. Dramatic directional lighting from above-left creates sculptural shadows along the neck and cheekbones, with warm backlighting creating a subtle halo effect. The composition is a style/fashion portrait with the face taking up roughly 60% of the frame, " + _IDENT_TRAIL,
+    },
+    "men_lowkey": {
+        "nome": "🖤 Low-Key Profissional",
+        "cat": "men",
+        "subject": "the man",
+        "prompt": "professional studio portrait, [subject], confident and determined expression, head slightly tilted down, wearing a black V-neck t-shirt. Using a low-key photography setup with butterfly lighting (key light from front above), a hair rim light from behind, and a faint background light. The atmosphere is filled with a subtle haze or smoke. Shot on a medium format camera, high contrast, cinematic, sharp focus, soft shadows. The atmosphere has a subtle haze. Hyper-realistic, shot on a 85mm lens, sharp focus on eyes, detailed facial features. --ar 4:5 --style raw, " + _IDENT_TRAIL,
+    },
+    "men_redstudio": {
+        "nome": "🔴 Don Vermelho (Estúdio)",
+        "cat": "men",
+        "subject": "the man",
+        "prompt": "Usando a imagem de referência e preservando a fisionomia, crie uma imagem com os seguintes parâmetros: Retrato ultrarrealista de estúdio, 4K, detalhes nítidos, iluminação cinematográfica, alto contraste. [subject] usando óculos de sol pretos retangulares, um terno preto impecável com uma camisa social preta por baixo (sem gravata), correntes de prata grossas no pescoço com pingentes (um medalhão e outro redondo/moeda), brincos de diamante redondos pequenos, uma pulseira de corrente de prata grossa e anéis de prata grossos nos dedos. Expressão facial séria e confiante. O fundo é uma parede vermelha sólida e vibrante, com um efeito de desfoque de movimento horizontal na cor vermelha, criando dinamismo. A câmera está em um ângulo frontal, meio diagonal, ligeiramente alto, lente de 50mm, abertura f/1.8, ISO 200, foco no modelo e desfoque de fundo, " + _IDENT_TRAIL,
+    },
+    "men_darkhero": {
+        "nome": "🦸 Herói Sombrio Editorial",
+        "cat": "men",
+        "subject": "the man",
+        "prompt": "Um retrato editorial de alta costura em 8K altamente detalhado, apresentando [subject]. Use o rosto da imagem de referência com total fidelidade. NÃO mudar o rosto. Figura masculina com presença poderosa, vestindo um traje escuro com um símbolo vermelho estilizado no peito, em uma pose confiante com braços cruzados e olhar direto. Fundo com gradiente em tons avermelhados, do vermelho escuro nas bordas para tons mais brilhantes no centro, destacando a figura. Iluminação dramática com jogo de luz e sombra enfatizando volume, textura e contornos do traje. Estilo inspirado em arte de super-heróis e editorial de moda. Atmosfera intensa, misteriosa e poderosa. " + _IDENT_TRAIL,
+    },
+
+    # ===== MULHERES (4) =====
+    "wom_baton": {
+        "nome": "💄 Baton Rouge Editorial",
+        "cat": "women",
+        "subject": "the woman",
+        "prompt": "Use the reference photo and make an ultra-realistic close-up portrait, [subject] wearing an elegant strapless black suit, seductive and confident expression, striking red lipstick, dramatic fashion lighting with a soft circular spotlight in the background, cinematic aesthetic of beauty editorial photography, ultra HD, " + _IDENT_TRAIL,
+    },
+    "wom_coffee": {
+        "nome": "☕ Café Editorial Bege",
+        "cat": "women",
+        "subject": "the woman",
+        "prompt": "A full-length studio photograph with a professional and elegant aesthetic. It captures [subject] seated in a light wooden chair with a seat and back upholstered in light fabric and straw accents. The subject sits in a confident and relaxed pose, slightly turned toward the camera, with a gentle smile. One hand rests on the arm of the chair, and the legs are crossed at the ankles. Wearing a suit (blazer and pants) in a neutral tone (light beige or gray-green) over a white or cream top. On the feet are light-colored high-heeled shoes with ankle straps. Wearing delicate jewelry: a necklace with a pendant, earrings, and rings. Nails painted a vibrant red. Hair styled medium-length with soft waves, combed to the side. The background is a solid-colored studio backdrop in a uniform, light brown tone. The lighting is studio-style, soft, and directional, coming from a frontal-upward angle. Captured with a prime portrait lens (85mm) on a full-frame camera, f/4.5, ISO 100, 1/200s. Studio lighting with a large softbox as the main light. " + _IDENT_TRAIL,
+    },
+    "wom_mirror": {
+        "nome": "📱 Selfie Espelho Confiante",
+        "cat": "women",
+        "subject": "the woman",
+        "prompt": "A full-length mirror or selfie photograph with a casual, modern aesthetic, featuring [subject] standing against a dark wall, looking at the camera with a serious, confident expression. One hand raised holding a cell phone taking the photo, the other playing with the hair. Wearing a black cropped top with a red print and short tight denim shorts. Discreet tattoos visible on the abdomen. Wearing a necklace with a heart pendant. Hair long, dark, styled with straight bangs and two thick braids over the shoulders. Dramatic makeup with winged eyeliner and lipstick. Background minimal dark wall. Lighting diffuse and soft from the front, highlighting face and clothing without harsh shadows. Camera: high-quality phone selfie, 24-35mm equivalent, f/1.8, ISO 200, 1/125s. " + _IDENT_TRAIL,
+    },
+    "wom_softselfie": {
+        "nome": "✨ Selfie Suave & Glow",
+        "cat": "women",
+        "subject": "the woman",
+        "prompt": "Create a soft aesthetic selfie featuring [subject] with a gentle confident expression. Lighting warmer and softer, dreamy glow on the skin. Background is a smooth dark wall. Outfit casual modern. Soft natural makeup. Overall mood calm, refined, and gentle while keeping a believable phone-selfie look. Camera: phone selfie, 35mm, f/2.0, ISO 200. " + _IDENT_TRAIL,
+    },
+
+    # ===== UNISSEX — Retratos Clássicos (4) =====
+    "u_joker": {
+        "nome": "🃏 Joker Dualidade",
+        "cat": "unisex", "grp": "classic",
+        "subject": "the person",
+        "prompt": "Generate a striking portrait with a central theme of duality and hidden identity. The image should feature [subject] holding a Joker-style clown mask in front of the face. The subject should be depicted in grayscale, suggesting a somber or desaturated reality, with a thoughtful or melancholic expression in the visible eye. The hand, holding the mask, should be detailed and possibly gloved or armored, also in grayscale. The clown mask, however, should be in vibrant color, with its classic red smile, red nose, and blue markings around the eyes, appearing vivid and unsettlingly cheerful. The background should be dark and minimalistic to emphasize the contrast between the subject and the mask. " + _IDENT_TRAIL,
+    },
+    "u_rembrandt": {
+        "nome": "🎨 Rembrandt Clássico",
+        "cat": "unisex", "grp": "classic",
+        "subject": "the person",
+        "prompt": "Generate a realistic portrait styled after a 17th-century Dutch oil painting, [subject], with classic Rembrandt lighting (Chiaroscuro), a single soft light source illuminating one side of the face against a dark, moody background. The final image should have the rich color palette, deep shadows, and subtle texture of an oil painting on canvas, with fine, visible brushstrokes. Calm and introspective expression, capturing a quiet, timeless moment, " + _IDENT_TRAIL,
+    },
+    "u_facepost": {
+        "nome": "🖼️ Pôster Tinta Editorial",
+        "cat": "unisex", "grp": "classic",
+        "subject": "the person",
+        "prompt": "Convert this image into an editorial art-poster in extreme close-up, half-frame composition; [subject]; thick impasto oil-paint texture with palette-knife strokes forming realistic features, teal-green iris with sharp catchlight, lips and skin rendered in layered paint ridges; abstract paint blocks in matte black and deep yellow overlapping the left side like chipped panels; subtle paper grain and micro-cracks; clean poster edges, deep vignette and soft studio background blur for focus; lighting: soft museum key light from upper left with gentle speculars on paint peaks, HDR exposure, high local contrast; optical language: 85mm portrait look, f/2.8, ISO 100, 1/160s, shallow depth isolating the eye; output intent: ultra-sharp, high-frequency paint detail, print-ready, " + _IDENT_TRAIL,
+    },
+    "u_corporate": {
+        "nome": "📰 Corporativo P&B",
+        "cat": "unisex", "grp": "classic",
+        "subject": "the person",
+        "prompt": "Black and white editorial magazine portrait, focus on [subject] seated on a sofa, confident introspective expression, direct gaze to camera, relaxed pose with hand supporting the chin, light dress shirt with a few buttons open, soft side lighting creating contrast and depth, sophisticated interior with curtains and modern decor in the background, realistic skin and fabric texture, high sharpness, professional photographic quality, 85mm f/1.8 lens, cinematic monochrome style. Negative: blurry, cartoonish, oversaturated, smiling, colored image, low contrast. " + _IDENT_TRAIL,
+    },
+
+    # ===== UNISSEX — Trilogia Leão (3) =====
+    "u_lion_winter": {
+        "nome": "❄️ Conexão Inverno",
+        "cat": "unisex", "grp": "lion",
+        "subject": "the person",
+        "prompt": "Create a realistic and emotional scene showing [subject] and a lion face to face in a moment of connection and respect. Eyes closed, with a serene expression, while the lion gently rests its forehead and muzzle against the subject, conveying trust and a spiritual bond. Both are standing on ground covered in light snow, with snowflakes gently falling. Wearing a dark coat, hair slightly tousled by the wind, and the lion displays a thick, majestic mane. In the background, a cold, misty natural landscape with blurred mountains and gray tones reinforces the calm and powerful atmosphere. Soft diffuse natural winter light, ultra-realistic cinematic 8K. " + _IDENT_TRAIL,
+    },
+    "u_lion_desert": {
+        "nome": "🏜️ Rei do Deserto",
+        "cat": "unisex", "grp": "lion",
+        "subject": "the person",
+        "prompt": "Create a powerful cinematic scene showing [subject] and a lion face to face in a warm desert environment, symbolizing dominance and unity. Calm and confident expression, eyes slightly closed, while the lion stands firmly with its mane flowing in the wind. Golden sand dunes stretch across the background with a glowing sunset horizon. Warm orange and gold tones dominate the scene. Strong directional lighting from the side creates dramatic shadows and highlights on the face and lion's fur. Ultra-realistic, cinematic, 8K, golden hour. " + _IDENT_TRAIL,
+    },
+    "u_lion_shadow": {
+        "nome": "🌑 Espírito Sombra",
+        "cat": "unisex", "grp": "lion",
+        "subject": "the person",
+        "prompt": "Create a dark cinematic scene showing [subject] and a lion in a mysterious connection within a shadowy environment. Eyes closed, deep introspective expression, while the lion appears partially hidden in darkness. Background filled with fog, dark tones, and minimal light. A single soft light source illuminates the faces, creating strong contrast and chiaroscuro effect. The atmosphere should feel spiritual, intense, and symbolic. Ultra-realistic, dark cinematic, 8K, low-key lighting. " + _IDENT_TRAIL,
+    },
+
+    # ===== UNISSEX — Music Phone (4) =====
+    "u_phone_spotify": {
+        "nome": "🎧 Spotify Gigante",
+        "cat": "unisex", "grp": "phone",
+        "subject": "the person",
+        "prompt": "Create a stylish, modern photo in vertical 9:16 format using the reference image, featuring [subject] standing confidently on the giant screen of an iPhone 16 lying on the floor. The screen displays a Spotify playlist with the song 'Enter Sandman - Metallica.' Wearing AirPods Max, an oversized white hoodie, black pants, and crisp white Air Jordans. The scene is shot from a high angle, top-down, to emphasize the scale of the phone. Minimalist, stylish, futuristic vibe. " + _IDENT_TRAIL,
+    },
+    "u_phone_neon": {
+        "nome": "🟣 Neon Music World",
+        "cat": "unisex", "grp": "phone",
+        "subject": "the person",
+        "prompt": "Create a futuristic neon-style scene in vertical 9:16 format featuring [subject] standing on a giant smartphone screen displaying a music interface. The environment glows with purple and blue neon lights. Wearing headphones, oversized hoodie, and streetwear outfit. High-angle top-down shot emphasizing scale. Cyberpunk aesthetic with glowing reflections. " + _IDENT_TRAIL,
+    },
+    "u_phone_apple": {
+        "nome": "🍏 Apple Minimal Luxo",
+        "cat": "unisex", "grp": "phone",
+        "subject": "the person",
+        "prompt": "Create a clean luxury Apple-style photo in vertical 9:16 featuring [subject] standing on a giant smartphone screen in a minimalist white environment. The interface is sleek and modern with music playing. Wearing premium streetwear with a refined aesthetic. Shot from a high top-down angle with soft shadows and clean lighting. " + _IDENT_TRAIL,
+    },
+    "u_phone_street": {
+        "nome": "🏙️ Street Music Energy",
+        "cat": "unisex", "grp": "phone",
+        "subject": "the person",
+        "prompt": "Create a street-style scene in vertical 9:16 featuring [subject] standing on a giant phone screen placed on an urban ground surface. The screen shows a music player interface. Background includes subtle street textures like concrete and graffiti. Outfit is casual streetwear with strong attitude. Shot from top-down angle. " + _IDENT_TRAIL,
+    },
+
+    # ===== UNISSEX — Editorial Fashion Pôster (2) =====
+    "u_ed_future": {
+        "nome": "🌸 Future Vision Pôster",
+        "cat": "unisex", "grp": "editorial",
+        "subject": "the person",
+        "prompt": "Fashion editorial poster featuring [subject] in modern Japanese streetwear, standing against a minimal gradient background. Oversized typography at the top spells 'FUTURE VISION' in English, with smaller Japanese katakana characters beneath. Monochrome palette in neon pink. Ultra-modern, high-fashion poster design. " + _IDENT_TRAIL,
+    },
+    "u_ed_modern": {
+        "nome": "🌷 Modern Edge Pôster",
+        "cat": "unisex", "grp": "editorial",
+        "subject": "the person",
+        "prompt": "Fashion editorial poster featuring [subject] in modern streetwear with a luxury minimalist approach, standing against a soft neutral gradient background. Clean oversized typography reading 'MODERN EDGE' with subtle Japanese characters. Soft monochrome tones with light pink accents. Clean and elegant composition. " + _IDENT_TRAIL,
+    },
+
+    # ===== UNISSEX — B&W Studio Portraits (3) =====
+    "u_bw_chiar": {
+        "nome": "⚫ Chiaroscuro P&B",
+        "cat": "unisex", "grp": "bw",
+        "subject": "the person",
+        "prompt": "Create a high-contrast black and white portrait based on the uploaded image, featuring [subject], keeping all facial features intact. Dramatic artistic studio photoshoot style. Use chiaroscuro lighting with a single strong key light from the side to create a Rembrandt lighting effect. Wearing a simple black turtleneck. Background is a dark, subtly textured studio canvas. The final image should feel intensely moody, powerful, and like a professionally captured photographic artwork. " + _IDENT_TRAIL,
+    },
+    "u_bw_hard": {
+        "nome": "⬛ Sombras Duras",
+        "cat": "unisex", "grp": "bw",
+        "subject": "the person",
+        "prompt": "Create a high-contrast black and white portrait featuring [subject] with extremely strong directional lighting casting deep, sharp shadows across the face. Dramatic studio setup with intense contrast and minimal fill light. Black background fading into darkness. Powerful and bold artistic mood. " + _IDENT_TRAIL,
+    },
+    "u_bw_soft": {
+        "nome": "🌫️ Rembrandt Suave",
+        "cat": "unisex", "grp": "bw",
+        "subject": "the person",
+        "prompt": "Create a black and white portrait featuring [subject] with classic Rembrandt lighting but softened for a more elegant and timeless look. Gentle shadow transitions, subtle highlights, and a refined artistic tone. Background remains dark with a soft texture. " + _IDENT_TRAIL,
+    },
+
+    # ===== UNISSEX — Hacker Noir (3) =====
+    "u_hk_noir": {
+        "nome": "💻 Hacker Noir",
+        "cat": "unisex", "grp": "hacker",
+        "subject": "the person",
+        "prompt": "A portrait using the reference image, featuring [subject] depicted as a hacker in a dark, rainy urban environment. Wearing a large hooded sweatshirt covering the head while keeping the face visible, looking directly at the camera. A computer screen reflects soft green code onto the face. Dramatic low-contrast lighting, with illumination mainly from the monitor and blurred streetlights in the background. Strong sense of isolation and paranoia. Grainy cinematic aesthetic, modern noir style, focus on technology and surveillance. " + _IDENT_TRAIL,
+    },
+    "u_hk_surv": {
+        "nome": "🛰️ Estado de Vigilância",
+        "cat": "unisex", "grp": "hacker",
+        "subject": "the person",
+        "prompt": "Create a dark cyber surveillance portrait featuring [subject] in a hooded outfit surrounded by subtle digital overlays and screen reflections. Green and blue code reflections illuminate the face. Background filled with blurred security cameras and digital noise. Low light, tense atmosphere, cinematic grain. " + _IDENT_TRAIL,
+    },
+    "u_hk_rain": {
+        "nome": "🌧️ Hacker na Chuva",
+        "cat": "unisex", "grp": "hacker",
+        "subject": "the person",
+        "prompt": "Create a rainy night portrait featuring [subject] wearing a hood, standing under light rain with water droplets visible. Streetlights reflect softly in the background. Face illuminated by a faint screen glow. Moody, cinematic, dark tones, subtle reflections on skin and clothing. " + _IDENT_TRAIL,
+    },
+
+    # ===== UNISSEX — Trilogia Carmesim (3) =====
+    "u_cr_dom": {
+        "nome": "🔴 Domínio Carmesim",
+        "cat": "unisex", "grp": "crimson",
+        "subject": "the person",
+        "prompt": "Create a vertical portrait shot in 1080x1920 format using the reference image, featuring [subject] with exact facial features preserved. Stark cinematic lighting with intense contrast. Captured from a slightly low, upward-facing angle emphasizing the jawline and neck, creating a sense of dominance and sculptural elegance. Background is a deep, saturated crimson red, contrasting strongly with luminous skin and dark wardrobe. " + _IDENT_TRAIL,
+    },
+    "u_cr_shad": {
+        "nome": "🩸 Sombra Carmesim",
+        "cat": "unisex", "grp": "crimson",
+        "subject": "the person",
+        "prompt": "Create a vertical cinematic portrait featuring [subject] with deep shadows covering part of the face. Low upward angle with dramatic contrast. Background remains deep crimson red but darker toward edges. Lighting sharper with stronger shadow cuts, creating a mysterious and intense presence. " + _IDENT_TRAIL,
+    },
+    "u_cr_glow": {
+        "nome": "🌹 Brilho Carmesim Suave",
+        "cat": "unisex", "grp": "crimson",
+        "subject": "the person",
+        "prompt": "Create a vertical portrait featuring [subject] with softer cinematic lighting and smoother transitions between light and shadow. Slight upward angle maintained. Background is a gradient crimson red with subtle glow. More elegant and refined mood. " + _IDENT_TRAIL,
+    },
+
+    # ===== UNISSEX — Neon Warrior (3) =====
+    "u_nw_warrior": {
+        "nome": "⚡ Guerreiro Neon",
+        "cat": "unisex", "grp": "neon",
+        "subject": "the person",
+        "prompt": "Edit this image featuring [subject] standing with one shoulder slightly forward, relaxed but commanding posture. Wearing an oversized black leather jacket with purple neon zipper details over a deep plum hoodie. Fitted black tech-fabric pants with silver piping down the sides, paired with matte black combat boots with electric purple soles. Surrounded by a glowing electric aura in shades of violet, magenta, and deep blue, with crackling energy particles around the silhouette. Background with dynamic angular brushstrokes in charcoal and purple creating depth. Expression intense and focused, with shadows accentuating facial features. Dark, moody, futuristic cinematic lighting with swirling particles and light wisps. " + _IDENT_TRAIL,
+    },
+    "u_nw_pulse": {
+        "nome": "🌐 Pulso de Energia",
+        "cat": "unisex", "grp": "neon",
+        "subject": "the person",
+        "prompt": "Edit this image featuring [subject] in a futuristic cyberpunk environment, standing confidently with subtle forward posture. Outfit remains dark techwear with glowing purple accents. Energy aura becomes more digital, with glitch particles and neon lines flowing around the body. Background includes abstract digital grids and light distortions. Mood intense and high-tech. " + _IDENT_TRAIL,
+    },
+    "u_nw_arcane": {
+        "nome": "🔮 Poder Arcano",
+        "cat": "unisex", "grp": "neon",
+        "subject": "the person",
+        "prompt": "Edit this image featuring [subject] surrounded by mystical purple energy resembling magical aura. Clothing remains dark but slightly more textured and arcane-inspired. Floating particles resemble sparks and smoke. Background darker with shadowy gradients. Expression serious and powerful, mystical atmosphere. " + _IDENT_TRAIL,
+    },
+
+    # ===== UNISSEX — Trilogia Emoção (3) =====
+    "u_em_break": {
+        "nome": "😔 Esgotamento Editorial",
+        "cat": "unisex", "grp": "emotion",
+        "subject": "the person",
+        "prompt": "Use the uploaded face and identity with high similarity, featuring [subject]. Do not change the face. Black-and-white dramatic editorial portrait. Expression tired and emotionally drained, with slightly heavy eyelids and subtly parted lips. Long wavy hair messy and unkempt, with strands falling over the forehead and framing the face. Both hands lifted into the hair, fingers tangled, gently pulling upward to enhance exhaustion and vulnerability. Wearing a black high-neck knit sweater with visible texture emphasized in grayscale. Directional lighting from the right creating strong highlights and deep shadows across the face. Background minimal and out of focus. Hyperrealistic detail in skin, hair, and fabric textures with shallow depth of field. 8K. " + _IDENT_TRAIL,
+    },
+    "u_em_hard": {
+        "nome": "🖤 Sombra de Emoção",
+        "cat": "unisex", "grp": "emotion",
+        "subject": "the person",
+        "prompt": "Create a high-contrast black and white portrait featuring [subject] with intense dramatic lighting. Expression exhausted and emotionally heavy. Strong shadows cut across the face creating a harsh, cinematic mood. Hair messy with hands gripping it more tightly. Background dark and minimal. " + _IDENT_TRAIL,
+    },
+    "u_em_analog": {
+        "nome": "📻 Emoção Analógica",
+        "cat": "unisex", "grp": "emotion",
+        "subject": "the person",
+        "prompt": "Create a black and white portrait featuring [subject] with a vintage analog film aesthetic. Expression tired and vulnerable. Add subtle grain, film texture, and slight imperfections. Lighting medium contrast with natural falloff. Background soft and blurred. " + _IDENT_TRAIL,
+    },
+
+    # ===== UNISSEX — Pele Extrema (5) =====
+    "u_sk_extreme": {
+        "nome": "🔬 Pele Extrema",
+        "cat": "unisex", "grp": "skin",
+        "subject": "the person",
+        "prompt": "Create an extreme close-up portrait based on the reference image, featuring [subject], using exact same facial features with maximum fidelity. Capture intense skin texture and moisture details. Dewy skin glistening with natural shine, wet hair strands partially covering the eye area. The eye is in sharp focus with high clarity, showing subtle redness for raw realism. Harsh directional studio lighting from a side angle emphasizing pores, highlights, and micro-shadows on the skin. Hyper-realistic, raw, detailed composition. " + _IDENT_TRAIL,
+    },
+    "u_sk_dew": {
+        "nome": "💧 Brilho de Orvalho Suave",
+        "cat": "unisex", "grp": "skin",
+        "subject": "the person",
+        "prompt": "Create an extreme close-up portrait featuring [subject] with softer moisture detail and smoother skin transitions. Dewy skin with subtle shine, wet strands lightly touching the face. Lighting softer but still directional, creating gentle highlights and refined shadows. Focus remains on the eye with high clarity. " + _IDENT_TRAIL,
+    },
+    "u_sk_raw": {
+        "nome": "🩹 Textura Crua",
+        "cat": "unisex", "grp": "skin",
+        "subject": "the person",
+        "prompt": "Create an extreme close-up portrait featuring [subject] with very harsh studio lighting. Strong side light exaggerating skin pores, imperfections, and texture. Wet skin appears more reflective with high contrast highlights. Eye remains the focal point with intense sharpness. " + _IDENT_TRAIL,
+    },
+    "u_sk_cine": {
+        "nome": "🎬 Foco Cinemático",
+        "cat": "unisex", "grp": "skin",
+        "subject": "the person",
+        "prompt": "Create a cinematic extreme close-up portrait featuring [subject] with controlled lighting and dramatic depth. Moist skin with subtle glow, wet hair partially covering the eye. Lighting more cinematic with shadow gradients and controlled highlights. Eye sharply focused with emotional depth. " + _IDENT_TRAIL,
+    },
+    "u_sk_dark": {
+        "nome": "🌒 Atmosfera Húmida Escura",
+        "cat": "unisex", "grp": "skin",
+        "subject": "the person",
+        "prompt": "Create a dark extreme close-up portrait featuring [subject] with low-key lighting. Wet skin glistening under minimal light. Hair strands more prominent across the face. Background fades into darkness. Eye still sharply focused with subtle redness, creating a moody and intense atmosphere. " + _IDENT_TRAIL,
+    },
+
+    # ===== UNISSEX — Olhar Submerso (2) =====
+    "u_se_eye": {
+        "nome": "👁️ Olhar Submerso",
+        "cat": "unisex", "grp": "submerged",
+        "subject": "the person",
+        "prompt": "Hyper-realistic black and white portrait featuring [subject] in an extreme close-up with the face partially submerged in water. Only one eye fully visible above the surface, with an intense and focused expression conveying strength, mystery, and introspection. Skin highly detailed with visible pores and water droplets, eyelashes and eyebrows sharply defined. Soft side lighting creating dramatic contrast between light and shadow, highlighting the depth of the gaze and reflective water texture. Water surface with gentle ripples and bubbles. Macro lens, ultra-high definition, shallow depth of field with focus entirely on the eye. " + _IDENT_TRAIL,
+    },
+    "u_se_dark": {
+        "nome": "🌊 Profundidade Sombria",
+        "cat": "unisex", "grp": "submerged",
+        "subject": "the person",
+        "prompt": "Create a darker black and white extreme close-up featuring [subject] with deeper shadows and more dramatic contrast. Water appears darker and heavier, with fewer reflections. Eye illuminated more selectively, creating a mysterious and intense mood. " + _IDENT_TRAIL,
+    },
+
+    # ===== UNISSEX — Vintage Beetle (4) =====
+    "u_vb_autumn": {
+        "nome": "🍂 Outono Vintage",
+        "cat": "unisex", "grp": "vintage",
+        "subject": "the person",
+        "prompt": "Side-angle photorealistic cinematic shot featuring [subject] sitting on the floor and leaning next to a classic vintage white Volkswagen Beetle parked on a city street with autumn leaves. Sunlight filters through trees, casting warm dappled light on the subject and the car. Wearing a crisp white shirt, black jacket, light blue jeans, small black leather bag, and black boots. Cinematic mood with soft depth of field and subtle film grain. Aspect ratio 9:16. " + _IDENT_TRAIL,
+    },
+    "u_vb_golden": {
+        "nome": "🌅 Luz Dourada Urbana",
+        "cat": "unisex", "grp": "vintage",
+        "subject": "the person",
+        "prompt": "Create a cinematic side-angle shot featuring [subject] in the same pose next to a vintage white Volkswagen Beetle during golden hour. Strong warm sunlight with long shadows. Autumn leaves glowing in golden tones. Slight lens flare and cinematic softness. Crisp white shirt, black jacket, light blue jeans. " + _IDENT_TRAIL,
+    },
+    "u_vb_rainy": {
+        "nome": "💧 Mood Vintage Chuvoso",
+        "cat": "unisex", "grp": "vintage",
+        "subject": "the person",
+        "prompt": "Create a moody rainy version featuring [subject] sitting beside a vintage white Volkswagen Beetle on a wet street. Reflections on the ground, soft mist in the air. Lighting dim and cinematic with cool tones. Subtle rain droplets visible. Crisp white shirt, black jacket, light blue jeans. " + _IDENT_TRAIL,
+    },
+    "u_vb_film": {
+        "nome": "🎞️ Estética Filme Urbana",
+        "cat": "unisex", "grp": "vintage",
+        "subject": "the person",
+        "prompt": "Create a cinematic street photography version featuring [subject] with a film-like look. Slight grain, muted tones, and natural lighting. Background with urban textures and autumn leaves. Same pose next to a vintage white Volkswagen Beetle. Strong documentary vibe. " + _IDENT_TRAIL,
+    },
+
+    # ===== UNISSEX — Hero Frame (1, complementar do Men) =====
+    "u_he_cine": {
+        "nome": "🎥 Frame Cinematográfico Herói",
+        "cat": "unisex", "grp": "hero",
+        "subject": "the person",
+        "prompt": "Retrato editorial cinematográfico em 8K apresentando [subject] com estética de super-herói moderno. Fundo vermelho com luz difusa e partículas leves. Iluminação suave porém dramática com highlights no rosto e traje. Pose firme com braços cruzados e expressão determinada. Estilo realista próximo de filme. " + _IDENT_TRAIL,
+    },
+
+    # ===== FLYERS RECRUTAMENTO (6) =====
+    "fl_general": {
+        "nome": "💼 Flyer Geral 'WE WANT YOU'",
+        "cat": "flyer",
+        "subject": "the person",
+        "prompt": "Edit this image into a creative recruitment poster featuring [subject] positioned on the right side, arms crossed, smiling naturally while facing slightly to the left. Radiating confidence and warmth, wearing a stylish red blazer over a white blouse. Maintain a red, black, and white geometric background, with circular and linear design elements framing the figure. On the left, display the bold headline: 'WE WANT YOU!' with 'WE' in white on a red block, 'WANT' in black on white, and 'YOU!' in red. Beneath that 'Join Our Professionals Team.' Add a 'WE'RE HIRING' section with: Graphic Designer, Marketing Staff, Finance Accountant, Operational Staff. Include an 'Apply Now!' button. Contact: company@gmail.com. Energetic, professional, inviting design. " + _IDENT_TRAIL,
+    },
+    "fl_tech": {
+        "nome": "💻 Flyer Tech Futurista",
+        "cat": "flyer",
+        "subject": "the person",
+        "prompt": "Edit this image into a modern tech recruitment poster featuring [subject] standing confidently slightly to the left side, holding a tablet, with a focused and professional expression. Wearing a smart casual outfit (dark blazer over a neutral shirt). Background with futuristic blue and purple gradient, subtle grid lines and glowing UI elements. Headline on the right: 'JOIN OUR TEAM' in bold futuristic font. Subtext: 'Build the Future With Us.' Add: 'WE'RE HIRING' - Software Engineer - UI/UX Designer - Data Analyst - Product Manager. Glowing 'Apply Now' button. Contact: careers@techvision.com. Lighting slightly neon, high contrast, modern startup aesthetic. " + _IDENT_TRAIL,
+    },
+    "fl_corporate": {
+        "nome": "🏢 Flyer Corporativo Limpo",
+        "cat": "flyer",
+        "subject": "the person",
+        "prompt": "Edit this image into a corporate recruitment flyer featuring [subject] seated at a desk, hands gently crossed, calm and confident expression. Wearing formal attire (blazer or suit). Background clean white with subtle grey lines and minimal design. Headline: 'WE ARE HIRING'. Subtext: 'Join Our Professional Team'. Open roles: Administrative Assistant, HR Manager, Accountant, Office Coordinator. 'Apply Today' button in blue. Contact: hr@companygroup.com. Soft studio lighting, clean layout, professional and trustworthy feel. " + _IDENT_TRAIL,
+    },
+    "fl_fitness": {
+        "nome": "💪 Flyer Fitness Power",
+        "cat": "flyer",
+        "subject": "the person",
+        "prompt": "Edit this image into a fitness recruitment poster featuring [subject] in a strong confident pose, arms slightly flexed or hands on hips, energetic expression. Wearing athletic outfit (gym wear). Background dark with red and black tones, smoke effects and light streaks. Headline: 'WE'RE BUILDING CHAMPIONS'. Subtext: 'Join Our Fitness Team'. Hiring: Personal Trainer, Fitness Coach, Nutrition Specialist, Gym Assistant. Bold 'JOIN NOW' button. Contact: fitness@powergym.com. High contrast lighting, dramatic shadows, intense gym vibe. " + _IDENT_TRAIL,
+    },
+    "fl_restaurant": {
+        "nome": "🍷 Flyer Restaurante Acolhedor",
+        "cat": "flyer",
+        "subject": "the person",
+        "prompt": "Edit this image into a restaurant hiring flyer featuring [subject] standing slightly sideways holding a tray or menu, friendly and welcoming smile. Wearing hospitality uniform or elegant outfit. Warm background with golden lighting, restaurant ambiance blur. Headline: 'JOIN OUR TEAM'. Subtext: 'We're Hiring Passionate People'. Positions: Waiter / Waitress, Chef Assistant, Bartender, Kitchen Staff. 'Apply Now' button. Contact: jobs@finebistro.com. Warm lighting, inviting atmosphere, soft glow. " + _IDENT_TRAIL,
+    },
+    "fl_creative": {
+        "nome": "🎨 Flyer Agência Criativa",
+        "cat": "flyer",
+        "subject": "the person",
+        "prompt": "Edit this image into a creative agency recruitment poster featuring [subject] in a relaxed artistic pose, slightly leaning, confident and creative expression. Wearing stylish modern outfit. Background with abstract shapes, colorful gradients (purple, orange, blue), paint strokes and design elements. Headline: 'CREATIVITY WANTED'. Subtext: 'Join Our Creative Studio'. Hiring: Graphic Designer, Video Editor, Social Media Manager, Content Creator. 'Let's Work Together' button. Contact: hello@creativelab.com. Vibrant colors, artistic layout, modern design style. " + _IDENT_TRAIL,
+    },
+
+    # ===== CASAIS — Story "Polaroid Romance" (3 cenas) =====
+    "co_polaroid_classic": {
+        "nome": "🎞️ Polaroid Clássico",
+        "cat": "couple", "story": "polaroid",
+        "subject": "the person",
+        "prompt": "Take a photo taken with a Polaroid camera. The photo should look like an ordinary photograph, without an explicit subject or property. Slight blur and a consistent light source like a flash from a dark room scattered throughout the image. Do not change the face. Change the background behind [subject] and the other person to white curtains. Create cute poses between both. The other person is holding a red Coca-Cola can and [subject] is holding a burger. Natural interaction, relaxed and candid feel. Polaroid candid style, flash low-light environment, indoor with white curtain background. " + _IDENT_TRAIL,
+    },
+    "co_polaroid_romantic": {
+        "nome": "❤️ Momento Romântico",
+        "cat": "couple", "story": "polaroid",
+        "subject": "the person",
+        "prompt": "Create a soft romantic Polaroid-style photo of [subject] and the other person standing close together with gentle affectionate poses. Slight blur and flash lighting effect in a dim room. Background replaced with soft white curtains. The other person holds a red Coca-Cola can and [subject] holds a burger. Both smiling naturally with subtle warmth. Polaroid romantic style, soft flash, close shot, warm intimate gentle mood. " + _IDENT_TRAIL,
+    },
+    "co_polaroid_playful": {
+        "nome": "😂 Diversão a Dois",
+        "cat": "couple", "story": "polaroid",
+        "subject": "the person",
+        "prompt": "Create a playful Polaroid-style photo of [subject] and the other person making fun poses. Slight blur with flash lighting in a dark environment. Background changed to white curtains. The other person holding a red Coca-Cola can while [subject] holds a burger. Both laughing or doing exaggerated expressions, energetic and fun. Polaroid playful style, flash, slight angle snapshot. " + _IDENT_TRAIL,
+    },
+
+    # ===== COMICS — Story A "Sombras do Cemitério" (2 páginas) =====
+    "x_a_p1": {
+        "nome": "📖 Cena 1 — Cemitério Emocional",
+        "cat": "comic", "story": "shadows", "scene": 1,
+        "subject": "the person",
+        "prompt": "Comic book page in realistic American comic style like The Walking Dead (Charlie Adlard / Tony Moore influence), detailed ink lines, muted earth tones, dramatic lighting, cinematic panel layout, 3 rows of panels on a single page. Top row (3 panels): Left panel (medium shot): [subject] kneeling devastated in front of a wooden cross grave in a foggy cemetery at dusk, one hand on the cross, crying with tears, speech bubble: 'I'LL ALWAYS LOVE YOU, TRISH.' Middle panel (extreme close-up): [subject]'s tearful face in profile, intense emotional expression, small speech bubble above: 'COLE?' Right panel (medium shot): another character standing nearby, looking at [subject], speech bubbles: 'THE WARDEN'S A GOOD MAN. STUCK AROUND WHEN THE S*** HIT THE FAN.' 'YOU ALL RIGHT?' 'I DON'T THINK SO.' 'I KNOW THAT FEELING.' Middle row (large wide panel): Two characters standing in overgrown cemetery with trees and ruined buildings in background at sunset. Left: [subject] looking serious. Right: second character pointing right with determined expression. Speech bubbles: 'HE'S ABOUT THE ONLY PERSON AROUND I STILL TRUST.' 'MY GRANDKIDS USED TO PLAY IN THIS PARK. YOU KNOW, BEFORE ALL OF THIS.' 'I ALWAYS LIKED IT HERE, ESPECIALLY IN THE FALL WHEN THE TREES TURNED.' Bottom row (large horizontal panel, close-up): Extreme close-up of both faces side by side, serious and emotional expressions. Speech bubble: 'THIS IS A GOOD PLACE, COLE. SHE'LL FIND PEACE HERE.' Overall atmosphere: somber, melancholic, post-apocalyptic, soft golden hour light mixed with cool shadows, detailed cross graves, tombstones, trees with autumn leaves, high detail, sharp linework, comic book coloring with strong blacks, full page layout, no text outside speech bubbles, 8k comic page --ar 3:4 --stylize 750. preserve identity, keep same face, keep facial structure, maintain original identity, do not change person, comic style face adaptation with identity consistency.",
+    },
+    "x_a_p2": {
+        "nome": "📖 Cena 2 — Conflito & Poder",
+        "cat": "comic", "story": "shadows", "scene": 2,
+        "subject": "the person",
+        "prompt": "American comic book page in realistic gritty style like The Walking Dead (Charlie Adlard influence), detailed black ink lines, muted earth tones, dramatic cinematic lighting, full page layout with multiple panels. Top row - large horizontal panel on the left + 2 small vertical panels on the right: Left large panel: [subject] and another character walking side by side through an overgrown cemetery at dusk. Speech bubbles: 'YOU TRACK DOWN THE FIRST SONS?' and 'LAST OF 'EM ARE DUG IN OVER BY PIER 12. GOING TO BE A BITCH FLUSHING THEM OUT, BUT ONCE THEY'RE DEALT WITH, WE CAN START RESTORING SOME ORDER AROUND HERE.' 'I'LL DEAL WITH THEM.' Right column (4 small close-up panels stacked): Top: Close-up of the second character looking serious. 'YOU'RE NOT THE ONLY ONE IN THIS FIGHT, COLE.' Next: Extreme close-up of [subject]'s eyes, intense expression. Next: Close-up of [subject]'s angry face, eyes narrowed. Bottom: [subject] shouting with mouth open, furious expression. 'MAYBE NOT. BUT THAT DOESN'T CHANGE WHAT HAPPENED.' 'NOTHING WILL CHANGE WHAT HAPPENED.' 'YOU DIDN'T SEE... WHAT HE DID TO HER...' Middle large panel: Close-up of [subject] looking down with intense grief and anger, glowing bright blue electric energy crackling around the hands and the gun being held. Blue lightning effects. 'NO, I DIDN'T.' 'BUT I KNOW WHAT IT'S LIKE TO HAVE SOMEONE STOLEN FROM YOU.' Bottom right panel: Two characters walking away through the cemetery path, sunset light. 'AND I KNOW WHAT GRIEF CAN DO TO A MAN. TRUST ME, YOU DON'T WANT TO GO DOWN THAT ROAD.' Overall style: post-apocalyptic, somber, detailed linework, strong shadows, golden hour mixed with cool tones, high contrast comic coloring, 8k comic page --ar 3:4 --stylize 650. preserve identity, keep same face, keep facial structure, maintain original identity, do not change person, comic style face adaptation with identity consistency.",
+    },
+
+    # ===== COMICS — Story B "A Jornada do Herói" (5 páginas) =====
+    "x_b_p1": {
+        "nome": "📕 Página 1 — A Perda",
+        "cat": "comic", "story": "journey", "scene": 1,
+        "subject": "the person",
+        "prompt": "Comic book page in realistic American comic style like The Walking Dead, detailed ink lines, muted earth tones, cinematic panel layout. Top panels: [subject] kneeling in a foggy cemetery at dusk, hand on a wooden cross grave, crying. Speech: 'I'LL ALWAYS LOVE YOU...' Close-up of [subject]'s tearful face. Speech: 'WHY...' Another character standing nearby. Speech: 'YOU CAN'T STAY HERE FOREVER.' 'IT'S NOT SAFE.' Middle panel: Wide shot of cemetery with broken tombstones and trees. [subject] standing slowly, grief visible. Bottom panel: Close-up of [subject]'s face, eyes filled with pain. Speech: 'I LOST EVERYTHING.' Atmosphere: somber, fog, cold tones, emotional grief, post-apocalyptic. preserve identity, keep same face, maintain facial structure, do not change person, comic style face adaptation.",
+    },
+    "x_b_p2": {
+        "nome": "📕 Página 2 — A Raiva",
+        "cat": "comic", "story": "journey", "scene": 2,
+        "subject": "the person",
+        "prompt": "Comic book page in gritty realistic style. Top panel: [subject] walking through ruins with another character. Speech: 'WHO DID THIS?' Close-up: [subject]'s eyes intense and filled with anger. Panels: Flashback silhouettes of chaos and violence. Speech: 'THEY TOOK HER FROM ME.' Bottom large panel: [subject] clenching fists, slight energy crackling around hands. Speech: 'I'M GOING TO END THIS.' Atmosphere: tension, anger, darker shadows. preserve identity, keep same face, maintain facial structure, do not change person, comic style face adaptation.",
+    },
+    "x_b_p3": {
+        "nome": "📕 Página 3 — O Confronto",
+        "cat": "comic", "story": "journey", "scene": 3,
+        "subject": "the person",
+        "prompt": "Comic page cinematic layout. Top: [subject] confronting a group of enemies in abandoned urban ruins. Speech: 'THIS ENDS NOW.' Action panels: Combat scenes, dynamic movement, impacts. Close-up: [subject] bleeding slightly but still standing strong. Enemy speech: 'YOU SHOULD HAVE STAYED BURIED.' Bottom: [subject] overpowering opponent. Atmosphere: action, chaos, dust, debris. preserve identity, keep same face, maintain facial structure, do not change person, comic style face adaptation.",
+    },
+    "x_b_p4": {
+        "nome": "📕 Página 4 — Despertar de Poder",
+        "cat": "comic", "story": "journey", "scene": 4,
+        "subject": "the person",
+        "prompt": "Comic book page with strong visual effects. Top: [subject] standing alone, wounded, breathing heavily. Middle: Energy begins to glow around hands, subtle at first. Close-ups: Eyes glowing slightly, determination. Speech: 'I WON'T BREAK.' Large panel: Full-body shot with visible energy aura forming around [subject]. Atmosphere: transformation, power, dramatic lighting. preserve identity, keep same face, maintain facial structure, do not change person, comic style face adaptation.",
+    },
+    "x_b_p5": {
+        "nome": "📕 Página 5 — Resolução",
+        "cat": "comic", "story": "journey", "scene": 5,
+        "subject": "the person",
+        "prompt": "Final comic page. Top: [subject] standing victorious in silence, battlefield behind. Middle: Second character approaches. Speech: 'IT'S OVER.' Close-up: [subject] calmer, eyes heavy but peaceful. Speech: 'NOTHING WILL BRING HER BACK...' Final panel: [subject] walking away into the distance at sunset. Speech: 'BUT I WON'T LET IT HAPPEN AGAIN.' Atmosphere: calm, bittersweet, golden light, closure. preserve identity, keep same face, maintain facial structure, do not change person, comic style face adaptation.",
+    },
+}
+
+
+# Sub-grupos da categoria Unissex (para evitar 1 mega-lista)
+PADRAO_UNISEX_GROUPS = {
+    "classic":   {"nome": "🎭 Retratos Clássicos"},
+    "lion":      {"nome": "🦁 Trilogia Leão"},
+    "phone":     {"nome": "📱 Music Phone Series"},
+    "editorial": {"nome": "🌸 Editorial Pôster"},
+    "bw":        {"nome": "⚫ B&W Studio Portraits"},
+    "hacker":    {"nome": "💻 Hacker Noir"},
+    "crimson":   {"nome": "🔴 Trilogia Carmesim"},
+    "neon":      {"nome": "⚡ Guerreiro Neon"},
+    "emotion":   {"nome": "😔 Trilogia Emoção"},
+    "skin":      {"nome": "🔬 Pele & Detalhes"},
+    "submerged": {"nome": "👁️ Olhar Submerso"},
+    "vintage":   {"nome": "🍂 Vintage Beetle"},
+    "hero":      {"nome": "🦸 Hero Frame"},
+}
+
+
+# Histórias (para Casais e Comics)
+PADRAO_STORIES = {
+    "polaroid": {
+        "cat": "couple",
+        "nome": "🎞️ Polaroid Romance",
+        "scenes": ["co_polaroid_classic", "co_polaroid_romantic", "co_polaroid_playful"],
+    },
+    "shadows": {
+        "cat": "comic",
+        "nome": "🦇 Sombras do Cemitério (2 páginas)",
+        "scenes": ["x_a_p1", "x_a_p2"],
+    },
+    "journey": {
+        "cat": "comic",
+        "nome": "⚔️ A Jornada do Herói (5 páginas)",
+        "scenes": ["x_b_p1", "x_b_p2", "x_b_p3", "x_b_p4", "x_b_p5"],
+    },
+}
+
+
+def build_padrao_final_prompt(style_key, user_caption=""):
+    """Combina o prompt fixo do estilo com a descrição do user.
+    Substitui [subject] pelo género de referência (the man / the woman / the person)
+    e anexa a descrição do user no fim."""
+    style = PADRAO_STYLES.get(style_key)
+    if not style:
+        return None
+    subject = style.get("subject", "the person")
+    base = style["prompt"].replace("[subject]", subject)
+    user_caption = (user_caption or "").strip()
+    if user_caption:
+        base = f"{base} Additional user request: {user_caption}"
+    return base
+
+
+# ==================== GALLERY PROMPT CACHE (Ver Prompt no canal) ====================
+GALLERY_PROMPTS_FILE = "gallery_prompts.json"
+GALLERY_PROMPTS_LOCK = Lock()
+
+
+def save_gallery_prompt(prompt_text):
+    """Guarda o prompt completo associado a um ID curto. Retorna o ID."""
+    pid = secrets.token_urlsafe(6)  # ~8 chars
+    data = load_json(GALLERY_PROMPTS_FILE)
+    data[pid] = {
+        "prompt": prompt_text,
+        "timestamp": datetime.now().isoformat()
+    }
+    # Mantém só os 5000 mais recentes para não inflacionar
+    if len(data) > 5000:
+        sorted_keys = sorted(data.keys(), key=lambda k: data[k].get("timestamp", ""), reverse=True)
+        data = {k: data[k] for k in sorted_keys[:5000]}
+    save_json(GALLERY_PROMPTS_FILE, data, GALLERY_PROMPTS_LOCK)
+    return pid
+
+
+def get_gallery_prompt(pid):
+    data = load_json(GALLERY_PROMPTS_FILE)
+    entry = data.get(pid)
+    if not entry:
+        return None
+    return entry.get("prompt")
+
+
+# ==================== STYLE PREVIEWS (auto-coleta da galeria) ====================
+# Mapeia creation_id → style_key (escrito quando um estilo é aplicado).
+# Usado depois pelo handler de publicação para guardar a preview real do canal.
+STYLE_CREATION_MAP_FILE = "style_creation_map.json"
+STYLE_CREATION_MAP_LOCK = Lock()
+
+# Previews oficiais por estilo: {style_key: {file_id, channel_msg_id, updated_at}}
+STYLE_PREVIEWS_FILE = "style_previews.json"
+STYLE_PREVIEWS_LOCK = Lock()
+
+
+def link_creation_to_style(creation_id, style_key):
+    """Guarda o mapping creation_id → style_key (para poder recuperar
+    quando a imagem for publicada na galeria)."""
+    if not creation_id or not style_key:
+        return
+    data = load_json(STYLE_CREATION_MAP_FILE)
+    data[creation_id] = {
+        "style_key": style_key,
+        "timestamp": datetime.now().isoformat()
+    }
+    # Limita a 5000 entradas mais recentes
+    if len(data) > 5000:
+        sorted_keys = sorted(data.keys(), key=lambda k: data[k].get("timestamp", ""), reverse=True)
+        data = {k: data[k] for k in sorted_keys[:5000]}
+    save_json(STYLE_CREATION_MAP_FILE, data, STYLE_CREATION_MAP_LOCK)
+
+
+def get_style_for_creation(creation_id):
+    if not creation_id:
+        return None
+    data = load_json(STYLE_CREATION_MAP_FILE)
+    entry = data.get(creation_id)
+    return entry.get("style_key") if entry else None
+
+
+def save_style_preview(style_key, file_id, channel_msg_id=None):
+    """Guarda/atualiza a preview oficial de um estilo (a mais recente vence)."""
+    if not style_key or not file_id:
+        return
+    data = load_json(STYLE_PREVIEWS_FILE)
+    data[style_key] = {
+        "file_id": file_id,
+        "channel_msg_id": channel_msg_id,
+        "updated_at": datetime.now().isoformat()
+    }
+    save_json(STYLE_PREVIEWS_FILE, data, STYLE_PREVIEWS_LOCK)
+
+
+def get_style_preview(style_key):
+    if not style_key:
+        return None
+    data = load_json(STYLE_PREVIEWS_FILE)
+    return data.get(style_key)
+
+
 
 
 # ==================== NOVO SISTEMA DE MODELOS (v2) ====================
@@ -1725,7 +2391,7 @@ LÍNGUA: Responde SEMPRE em {lang_names.get(lang, 'Português')}.
 🎨 QUANDO O UTILIZADOR ESTÁ SEM IDEIAS:
 - Faz 2-3 perguntas curtas para perceber o estilo dele (moderno/retro, cores, mood)
 - Sugere 3 ideias concretas e diferentes
-- Oferece gerar uma delas (1 crédito)
+- Oferece gerar uma delas (10 créditos)
 
 📸 QUANDO QUER EDITAR/COMBINAR FOTOS (ex: flyer, juntar 2 pessoas):
 - NÃO gera imagem aleatória! Pede: "Envia-me as fotos aqui no chat (podes enviar 2 a 5 juntas)."
@@ -1753,7 +2419,7 @@ LÍNGUA: Responde SEMPRE em {lang_names.get(lang, 'Português')}.
 
 INFO DO USER:
 • Créditos: {creditos}
-• Modelos: Padrão (1c), Pro (3c), Artístico (2c), Carrossel (N c)
+• Modelos: Padrão (10c — com legenda direto, sem legenda 65+ estilos prontos), Pro (18c), Artístico (13c), Carrossel (N c)
 • Envia fotos → ofereço 3 modelos; envia texto descritivo → ofereço gerar
 • Menu: "Gerar Fotos" (criar do zero) / "Editar Fotos" (enviar foto) / "Carrossel" (série)
 
@@ -2023,14 +2689,14 @@ def process_multiple_photos(user_id, lang, caption):
         # Mostrar botoes de selecao de modelo
         markup = telebot.types.InlineKeyboardMarkup(row_width=1)
         texts = {
-            "pt": f"📸 <b>{len(photos)} fotos recebidas!</b>\n\n<b>Escolha o modelo:</b>\n\n🎨 <b>Modelo Padrão</b> (3 créditos)\nCombina as fotos conforme descrição\n\n✨ <b>Modelo Pro</b> (5 créditos)\nCombina com melhoria fotorrealista\n\n💳 Seus créditos: <code>{creditos}</code>",
-            "en": f"📸 <b>{len(photos)} photos received!</b>\n\n<b>Choose model:</b>\n\n🎨 <b>Standard</b> (3 credits)\nCombine photos as described\n\n✨ <b>Pro Model</b> (5 credits)\nCombine with photorealistic enhancement\n\n💳 Your credits: <code>{creditos}</code>",
-            "es": f"📸 <b>{len(photos)} fotos recibidas!</b>\n\n<b>Elige modelo:</b>\n\n🎨 <b>Modelo Estandar</b> (3 créditos)\nCombina las fotos segun descripcion\n\n✨ <b>Modelo Pro</b> (5 créditos)\nCombina con mejora fotorrealista\n\n💳 Tus créditos: <code>{creditos}</code>"
+            "pt": f"📸 <b>{len(photos)} fotos recebidas!</b>\n\n<b>Escolha o modelo:</b>\n\n🎨 <b>Modelo Padrão</b> ({MODELO_PADRAO['custo']} créditos)\nCombina as fotos conforme descrição\n\n✨ <b>Modelo Pro</b> ({MODELO_PRO['custo']} créditos)\nCombina com melhoria fotorrealista\n\n💳 Seus créditos: <code>{creditos}</code>",
+            "en": f"📸 <b>{len(photos)} photos received!</b>\n\n<b>Choose model:</b>\n\n🎨 <b>Standard</b> ({MODELO_PADRAO['custo']} credits)\nCombine photos as described\n\n✨ <b>Pro Model</b> ({MODELO_PRO['custo']} credits)\nCombine with photorealistic enhancement\n\n💳 Your credits: <code>{creditos}</code>",
+            "es": f"📸 <b>{len(photos)} fotos recibidas!</b>\n\n<b>Elige modelo:</b>\n\n🎨 <b>Modelo Estandar</b> ({MODELO_PADRAO['custo']} créditos)\nCombina las fotos segun descripcion\n\n✨ <b>Modelo Pro</b> ({MODELO_PRO['custo']} créditos)\nCombina con mejora fotorrealista\n\n💳 Tus créditos: <code>{creditos}</code>"
         }
         markup.add(
-            telebot.types.InlineKeyboardButton("🎨 Padrão · 3 créditos", callback_data="multi_model_padrao"),
-            telebot.types.InlineKeyboardButton("✨ Pro · 5 créditos", callback_data="multi_model_pro"),
-            telebot.types.InlineKeyboardButton("🎭 Artístico · 2 créditos", callback_data="multi_model_artistico"),
+            telebot.types.InlineKeyboardButton(f"🎨 Padrão · {MODELO_PADRAO['custo']} créditos", callback_data="multi_model_padrao"),
+            telebot.types.InlineKeyboardButton(f"✨ Pro · {MODELO_PRO['custo']} créditos", callback_data="multi_model_pro"),
+            telebot.types.InlineKeyboardButton(f"🎭 Artístico · {MODELO_ARTISTICO['custo']} créditos", callback_data="multi_model_artistico"),
             telebot.types.InlineKeyboardButton("❌ Cancelar", callback_data="multi_model_cancel")
         )
         
@@ -2305,7 +2971,7 @@ def callback_onboarding(call):
         )
         bot.send_message(call.message.chat.id, terms.get(lang, terms["pt"]), reply_markup=markup, parse_mode='HTML')
     else:
-        bot.send_message(call.message.chat.id, "🎨 <b>Bem-vindo ao Remake Pixel!</b>\n\nCrie e edite imagens com IA.\n5 créditos grátis para experimentar!", parse_mode='HTML')
+        bot.send_message(call.message.chat.id, "🎨 <b>Bem-vindo ao Remake Pixel!</b>\n\nCrie e edite imagens com IA.\n30 créditos grátis para experimentar!", parse_mode='HTML')
         time.sleep(1)
         set_onboarded(user_id)
         terms = {
@@ -2384,25 +3050,30 @@ def callback_actions(call):
         
         texts = {
             "pt": ("📸 <b>Editar Fotos</b>\n\n"
-                   "Envie 1 a 5 imagens no chat.\n\n"
+                   "Envia 1 a 5 imagens no chat.\n\n"
                    "<b>3 modos disponíveis:</b>\n\n"
-                   "🎨 <b>Padrão</b> (3 cred)\n"
-                   "→ Requer prompt obrigatório\n"
-                   "→ Ex: 'Melhore a qualidade', 'Remova o fundo'\n\n"
-                   "✨ <b>Pro</b> (5 cred)\n"
-                   "→ Melhoria fotorrealista automática\n"
-                   "→ Não precisa de prompt\n\n"
-                   "🎭 <b>Artístico</b> (2 cred)\n"
+                   f"🎨 <b>Padrão</b> ({MODELO_PADRAO['custo']} cred)\n"
+                   "→ Com legenda: edita conforme a tua descrição (direto)\n"
+                   "→ Sem legenda: 🎨 escolhe entre <b>65+ estilos prontos</b> (Homens, Mulheres, Unissex, Flyers, Casais, Comics)\n"
+                   "→ Ex: 'Mais qualidade', 'Remove o fundo' ou um estilo pré-feito\n\n"
+                   f"✨ <b>Pro</b> ({MODELO_PRO['custo']} cred)\n"
+                   "→ Melhoria fotorrealista (FLUX.2 Klein 9B)\n"
+                   "→ Submenus: Personalizar, Deixa mais realista (7 presets), 🎭 Estilo & Humor (7), ✨ Enhancements Avançados (6)\n\n"
+                   f"🎭 <b>Artístico</b> ({MODELO_ARTISTICO['custo']} cred)\n"
                    "→ Transforma em 33 estilos (anime, Disney, etc.)\n"
                    "→ Prompt opcional\n\n"
-                   "💡 <b>Dica:</b> Envie 2-5 fotos juntas para combinar!"),
+                   "💡 <b>Dica:</b> Envia 2-5 fotos juntas para combinar (ou 2 fotos para estilos de 'Casais')!"),
             "en": ("📸 <b>Edit Photos</b>\n\n"
                    "Send 1 to 5 images in the chat.\n\n"
                    "<b>3 modes available:</b>\n\n"
-                   "🎨 <b>Standard</b> (3 cred) — Requires prompt\n"
-                   "✨ <b>Pro</b> (5 cred) — Auto photorealistic (no prompt needed)\n"
-                   "🎭 <b>Artistic</b> (2 cred) — 33 art styles\n\n"
-                   "💡 Send 2-5 photos together to combine!"),
+                   f"🎨 <b>Standard</b> ({MODELO_PADRAO['custo']} cred)\n"
+                   "→ With caption: edits using your description (direct)\n"
+                   "→ Without caption: 🎨 pick from <b>65+ ready styles</b> (Men, Women, Unisex, Flyers, Couples, Comics)\n\n"
+                   f"✨ <b>Pro</b> ({MODELO_PRO['custo']} cred)\n"
+                   "→ Photorealistic enhancement (FLUX.2 Klein 9B)\n"
+                   "→ Submenus: Custom, Make it Realistic (7 presets), 🎭 Style & Mood (7), ✨ Advanced Enhancements (6)\n\n"
+                   f"🎭 <b>Artistic</b> ({MODELO_ARTISTICO['custo']} cred) — 33 art styles, optional prompt\n\n"
+                   "💡 Send 2-5 photos together to combine (or 2 photos for 'Couples' styles)!"),
         }
         
         bot.send_message(call.message.chat.id, texts.get(lang, texts["pt"]), 
@@ -2506,32 +3177,43 @@ def callback_actions(call):
         texts = {
             "pt": (f"❓ <b>Ajuda - Remake Pixel</b>\n\n"
                    f"<b>🎨 GERAR IMAGENS</b>\n"
-                   f"No menu, clique em 'Gerar Fotos' e descreva o que quer criar.\n\n"
+                   f"No menu, clica em 'Gerar Fotos' e descreve o que queres criar.\n\n"
                    f"<b>📸 EDITAR FOTOS</b>\n"
-                   f"Envie 1 a 5 fotos no chat.\n"
-                   f"🎨 Padrão (3 cred) — Descreva o que quer mudar\n"
-                   f"✨ Pro (5 cred) — Melhoria automática sem prompt\n"
-                   f"🎭 Artístico (2 cred) — 33 estilos artísticos\n\n"
+                   f"Envia 1 a 5 fotos no chat.\n"
+                   f"🎨 <b>Padrão</b> ({MODELO_PADRAO['custo']} cred) — Com legenda: edita direto pela tua descrição. <b>Sem legenda: 65+ estilos prontos</b> (Homens, Mulheres, Unissex, Flyers, Casais, Comics)\n"
+                   f"✨ <b>Pro</b> ({MODELO_PRO['custo']} cred) — Melhoria fotorrealista. Submenus: Personalizar, 📷 Realista (7), 🎭 Estilo & Humor (7), ✨ Enhancements Avançados (6)\n"
+                   f"🎭 <b>Artístico</b> ({MODELO_ARTISTICO['custo']} cred) — 33 estilos artísticos\n"
+                   f"💑 <b>Casais</b> — Envia 2 fotos juntas (ou 1 dos dois) e usa o estilo 'Casais' do Padrão\n"
+                   f"📚 <b>Comics</b> — Páginas de banda desenhada estilo Walking Dead (cenas com diálogo)\n\n"
                    f"<b>📱 CARROSSEL</b>\n"
                    f"Gera 2-4 imagens em sequência para Instagram.\n\n"
                    f"<b>⚙️ CONFIGURAÇÕES</b>\n"
                    f"Estilos visuais (33 opções), formato (Instagram, TikTok, etc.), variações e personalidade da IA.\n\n"
                    f"<b>💬 CHAT IA</b>\n"
-                   f"Escreva qualquer mensagem para conversar com a IA. Grátis!\n\n"
+                   f"Escreve qualquer mensagem para conversar com a IA. Grátis!\n\n"
+                   f"<b>🖼️ GALERIA @RemakePixel_Gallery</b>\n"
+                   f"Cada imagem partilhada tem agora <b>📋 Ver Prompt</b> — clica para receberes o prompt completo em DM e reutilizares.\n\n"
                    f"<b>📋 COMANDOS</b>\n"
                    f"/menu — Menu principal\n"
                    f"/start — Reiniciar bot\n"
                    f"/wizard — Assistente de criação\n"
+                   f"/estilos — Catálogo dos 65+ estilos do Padrão (com previews reais)\n"
                    f"/creditos — Ver saldo\n"
                    f"/idioma — Mudar idioma\n"
                    f"/termos — Termos de uso\n\n"
-                   f"Dúvidas? Clique abaixo para falar com o suporte!"),
+                   f"Dúvidas? Clica abaixo para falar com o suporte!"),
             "en": (f"❓ <b>Help - Remake Pixel</b>\n\n"
                    f"<b>🎨 GENERATE</b> — Click 'Generate' and describe what you want.\n"
-                   f"<b>📸 EDIT</b> — Send 1-5 photos. Choose Standard/Pro/Artistic.\n"
+                   f"<b>📸 EDIT PHOTOS</b> — Send 1-5 photos.\n"
+                   f"🎨 <b>Standard</b> ({MODELO_PADRAO['custo']} cred) — With caption: direct edit. Without caption: <b>65+ ready styles</b> (Men, Women, Unisex, Flyers, Couples, Comics)\n"
+                   f"✨ <b>Pro</b> ({MODELO_PRO['custo']} cred) — Photorealistic. Submenus: Custom, 📷 Realistic (7), 🎭 Style & Mood (7), ✨ Advanced Enhancements (6)\n"
+                   f"🎭 <b>Artistic</b> ({MODELO_ARTISTICO['custo']} cred) — 33 art styles\n"
+                   f"💑 <b>Couples</b> — Send 2 photos and pick a 'Couples' style under Standard\n"
+                   f"📚 <b>Comics</b> — Walking-Dead-style comic pages with dialogue\n\n"
                    f"<b>📱 CAROUSEL</b> — Generate 2-4 sequential images.\n"
                    f"<b>⚙️ SETTINGS</b> — 33 styles, formats, variations.\n"
-                   f"<b>💬 AI CHAT</b> — Free, just type!\n\n"
+                   f"<b>💬 AI CHAT</b> — Free, just type!\n"
+                   f"<b>🖼️ GALLERY</b> — Each shared image now has <b>📋 View Prompt</b> button.\n\n"
                    f"Questions? Click below for support!"),
         }
         markup = telebot.types.InlineKeyboardMarkup(row_width=1)
@@ -2567,7 +3249,7 @@ def callback_actions(call):
             "es": f"🎁 <b>Recomienda amigos y gana creditos!</b>\n\n📊 Tus referencias: {total}\n💰 Bonus: +10 creditos cuando tu amigo compre 5EUR+\n\nHaz clic en el boton para compartir:"
         }
         
-        share_text = "Experimenta o Remake Pixel! Cria e edita imagens com IA no Telegram. 5 créditos grátis!"
+        share_text = "Experimenta o Remake Pixel! Cria e edita imagens com IA no Telegram. 30 créditos grátis!"
         share_url = link
         
         markup = telebot.types.InlineKeyboardMarkup(row_width=1)
@@ -2931,16 +3613,34 @@ def callback_gallery(call):
     cta = cta_texts.get(lang, cta_texts["pt"]).format(u=BOT_USERNAME)
     caption = f"✨ <i>{prompt_text}</i>\n\n{cta}" if prompt_text else cta
 
-    # Botao inline "Abrir bot"
-    ikm = telebot.types.InlineKeyboardMarkup()
+    # Guarda o prompt completo (não truncado) para o botão "📋 Ver Prompt"
+    full_prompt = creation.get("prompt") or ""
+    prompt_id = save_gallery_prompt(full_prompt) if full_prompt else None
+
+    # Botões inline: "Criar o meu →" + "📋 Ver Prompt"
+    ikm = telebot.types.InlineKeyboardMarkup(row_width=2)
     ikm.add(telebot.types.InlineKeyboardButton("🤖 Criar o meu →", url=f"https://t.me/{BOT_USERNAME}"))
+    if prompt_id:
+        ikm.add(telebot.types.InlineKeyboardButton("📋 Ver Prompt", callback_data=f"vp_{prompt_id}"))
 
     try:
         # Descarrega imagem e envia para o canal
         img_bytes = requests.get(image_url, timeout=60).content
-        bot.send_photo(GALLERY_CHANNEL, img_bytes, caption=caption,
-                       reply_markup=ikm, parse_mode='HTML')
+        sent_msg = bot.send_photo(GALLERY_CHANNEL, img_bytes, caption=caption,
+                                  reply_markup=ikm, parse_mode='HTML')
         _mark_published_gallery(user_id, creation_id)
+
+        # 🎨 Auto-coleta de preview de estilo (Opção 3): se este creation foi feito
+        # com um estilo do Modelo Padrão, guarda o file_id do canal como preview oficial.
+        try:
+            style_key_for_preview = get_style_for_creation(creation_id)
+            if style_key_for_preview and sent_msg and sent_msg.photo:
+                # Pega no maior tamanho da foto enviada ao canal
+                preview_file_id = sent_msg.photo[-1].file_id
+                save_style_preview(style_key_for_preview, preview_file_id, sent_msg.message_id)
+                logger.info(f"Preview do estilo {style_key_for_preview} atualizada via galeria (creation={creation_id})")
+        except Exception as _e:
+            logger.warning(f"Falha a auto-guardar preview de estilo: {_e}")
 
         # Contador de publicacoes do user + bonus a cada 10 (anti-prejuizo)
         pub_data = load_json("gallery_publish_count.json")
@@ -2968,6 +3668,42 @@ def callback_gallery(call):
             bot.answer_callback_query(call.id, "⚠️ Canal não configurado. Avisa o admin.", show_alert=True)
         else:
             bot.answer_callback_query(call.id, f"❌ Erro: {str(e)[:80]}", show_alert=True)
+
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('vp_'))
+def callback_view_prompt(call):
+    """Handler do botão '📋 Ver Prompt' do canal da galeria.
+    Envia o prompt completo em DM (formato copy-friendly)."""
+    user_id = call.from_user.id
+    pid = call.data.replace('vp_', '')
+    full_prompt = get_gallery_prompt(pid)
+
+    if not full_prompt:
+        bot.answer_callback_query(call.id, "❌ Prompt não encontrado ou expirou.", show_alert=True)
+        return
+
+    # Mensagem com o prompt em <code> para copiar fácil
+    header = "📋 <b>Prompt completo desta imagem</b>\n\n<i>Copia e cola para reutilizar no @" + BOT_USERNAME + "</i>\n\n"
+    # Telegram limit ~4096 chars por msg; partir se necessário
+    body = full_prompt
+    msg = header + "<code>" + (body.replace("<", "&lt;").replace(">", "&gt;")[:3500]) + "</code>"
+
+    try:
+        bot.send_message(user_id, msg, parse_mode='HTML')
+        bot.answer_callback_query(call.id, "📩 Prompt enviado em DM!")
+    except Exception:
+        # User não iniciou o bot ou bloqueou
+        try:
+            bot.answer_callback_query(
+                call.id,
+                f"⚠️ Inicia primeiro o bot @{BOT_USERNAME} e clica novamente.",
+                show_alert=True
+            )
+        except Exception:
+            pass
+
+
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
 def callback_buy(call):
@@ -4318,6 +5054,246 @@ def cmd_creditos(message):
     creditos = get_user_credits(user_id)
     bot.send_message(message.chat.id, f"💳 <code>{creditos}</code> créditos", parse_mode='HTML')
 
+
+@bot.message_handler(commands=['estilos', 'styles', 'catalogo'])
+def cmd_estilos(message):
+    """Mostra o catálogo de estilos do Modelo Padrão (com previews reais coletadas da galeria)."""
+    user_id = message.from_user.id
+    lang = get_user_lang(user_id)
+    title = {
+        "pt": ("🎨 <b>Catálogo de Estilos — Modelo Padrão</b>\n\n"
+               "Vê todos os estilos disponíveis (com previews reais de utilizadores que publicaram na galeria).\n\n"
+               "💡 <i>Para usar um estilo: envia uma foto sem legenda, clica em Padrão e escolhe.</i>"),
+        "en": ("🎨 <b>Style Catalog — Standard Model</b>\n\n"
+               "Browse all available styles (with real previews from users who published to the gallery).\n\n"
+               "💡 <i>To use a style: send a photo without caption, tap Standard and pick one.</i>"),
+        "es": ("🎨 <b>Catálogo de Estilos — Modelo Estándar</b>\n\n"
+               "Ve todos los estilos (con previews reales de usuarios que publicaron en la galería).\n\n"
+               "💡 <i>Para usar un estilo: envía una foto sin descripción, toca Estándar y elige.</i>"),
+    }
+    mk = telebot.types.InlineKeyboardMarkup(row_width=1)
+    cats = {
+        "pt": [("👨 Para Homens", "men"), ("👩 Para Mulheres", "women"), ("👤 Unissex", "unisex"),
+               ("📋 Flyers Recrutamento", "flyer"), ("💑 Casais", "couple"), ("📚 Comics / Histórias", "comic")],
+        "en": [("👨 For Men", "men"), ("👩 For Women", "women"), ("👤 Unisex", "unisex"),
+               ("📋 Recruitment Flyers", "flyer"), ("💑 Couples", "couple"), ("📚 Comics / Stories", "comic")],
+        "es": [("👨 Para Hombres", "men"), ("👩 Para Mujeres", "women"), ("👤 Unisex", "unisex"),
+               ("📋 Flyers Reclutamiento", "flyer"), ("💑 Parejas", "couple"), ("📚 Comics / Historias", "comic")],
+    }
+    # Conta quantos estilos por categoria + quantos têm preview
+    previews = load_json(STYLE_PREVIEWS_FILE)
+    cat_counts = {}
+    for k, st in PADRAO_STYLES.items():
+        c = st.get("cat", "unisex")
+        cat_counts.setdefault(c, [0, 0])
+        cat_counts[c][0] += 1
+        if k in previews:
+            cat_counts[c][1] += 1
+    for label, cat_key in cats.get(lang, cats["pt"]):
+        total, with_prev = cat_counts.get(cat_key, [0, 0])
+        suffix = f" ({with_prev}/{total} previews)" if total > 0 else ""
+        mk.add(telebot.types.InlineKeyboardButton(label + suffix, callback_data=f"est_cat_{cat_key}"))
+
+    bot.send_message(message.chat.id, title.get(lang, title["pt"]), reply_markup=mk, parse_mode='HTML')
+
+
+def _est_styles_keyboard(cat, lang):
+    """Lista os estilos de uma categoria. Para 'unisex' mostra sub-grupos.
+    Para 'couple'/'comic' mostra histórias. Outras categorias mostram estilos
+    diretamente. Cada estilo tem um ✅ se já existe preview, ou ⚪ se ainda não."""
+    mk = telebot.types.InlineKeyboardMarkup(row_width=1)
+    previews = load_json(STYLE_PREVIEWS_FILE)
+
+    if cat == "unisex":
+        # Conta previews por grupo
+        for grp_key, grp in PADRAO_UNISEX_GROUPS.items():
+            total, with_prev = 0, 0
+            for k, st in PADRAO_STYLES.items():
+                if st.get("cat") == "unisex" and st.get("grp") == grp_key:
+                    total += 1
+                    if k in previews:
+                        with_prev += 1
+            mk.add(telebot.types.InlineKeyboardButton(
+                f"{grp['nome']} ({with_prev}/{total})",
+                callback_data=f"est_grp_{grp_key}"
+            ))
+    elif cat in ("couple", "comic"):
+        for story_key, story in PADRAO_STORIES.items():
+            if story["cat"] == cat:
+                mk.add(telebot.types.InlineKeyboardButton(story["nome"], callback_data=f"est_sto_{story_key}"))
+    else:
+        for k, st in PADRAO_STYLES.items():
+            if st.get("cat") == cat:
+                icon = "✅" if k in previews else "⚪"
+                mk.add(telebot.types.InlineKeyboardButton(f"{icon} {st['nome']}", callback_data=f"est_view_{k}"))
+
+    back_label = {"pt": "⬅️ Voltar ao catálogo", "en": "⬅️ Back to catalog", "es": "⬅️ Volver al catálogo"}.get(lang, "⬅️ Voltar")
+    mk.add(telebot.types.InlineKeyboardButton(back_label, callback_data="est_home"))
+    return mk
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("est_"))
+def callback_estilos(call):
+    """Navegação do catálogo /estilos."""
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    data = call.data
+
+    if data == "est_home":
+        # Recria o menu inicial editando a mensagem
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        # Re-envia (simplificado, reutiliza cmd_estilos com mensagem fake)
+        class _FakeMsg:
+            chat = call.message.chat
+            from_user = call.from_user
+        cmd_estilos(_FakeMsg)
+        return
+
+    if data.startswith("est_cat_"):
+        cat = data.replace("est_cat_", "")
+        titles = {
+            "men":     {"pt": "👨 <b>Para Homens</b>", "en": "👨 <b>For Men</b>", "es": "👨 <b>Para Hombres</b>"},
+            "women":   {"pt": "👩 <b>Para Mulheres</b>", "en": "👩 <b>For Women</b>", "es": "👩 <b>Para Mujeres</b>"},
+            "unisex":  {"pt": "👤 <b>Unissex</b> — escolhe o tema:", "en": "👤 <b>Unisex</b> — pick a theme:", "es": "👤 <b>Unisex</b> — elige el tema:"},
+            "flyer":   {"pt": "📋 <b>Flyers Recrutamento</b>", "en": "📋 <b>Recruitment Flyers</b>", "es": "📋 <b>Flyers Reclutamiento</b>"},
+            "couple":  {"pt": "💑 <b>Casais</b>", "en": "💑 <b>Couples</b>", "es": "💑 <b>Parejas</b>"},
+            "comic":   {"pt": "📚 <b>Comics / Histórias</b>", "en": "📚 <b>Comics / Stories</b>", "es": "📚 <b>Comics / Historias</b>"},
+        }
+        title = titles.get(cat, titles["men"]).get(lang, titles.get(cat, titles["men"])["pt"])
+        legend = {
+            "pt": "\n\n✅ Já tem preview real · ⚪ Ainda sem preview",
+            "en": "\n\n✅ Has real preview · ⚪ No preview yet",
+            "es": "\n\n✅ Tiene preview real · ⚪ Sin preview aún",
+        }
+        try:
+            bot.edit_message_text(title + legend.get(lang, legend["pt"]),
+                                  call.message.chat.id, call.message.message_id,
+                                  reply_markup=_est_styles_keyboard(cat, lang), parse_mode='HTML')
+        except Exception:
+            bot.send_message(call.message.chat.id, title + legend.get(lang, legend["pt"]),
+                             reply_markup=_est_styles_keyboard(cat, lang), parse_mode='HTML')
+        return
+
+    if data.startswith("est_grp_"):
+        grp_key = data.replace("est_grp_", "")
+        grp = PADRAO_UNISEX_GROUPS.get(grp_key)
+        if not grp:
+            bot.answer_callback_query(call.id, "Grupo inválido.")
+            return
+        previews = load_json(STYLE_PREVIEWS_FILE)
+        mk = telebot.types.InlineKeyboardMarkup(row_width=1)
+        for k, st in PADRAO_STYLES.items():
+            if st.get("cat") == "unisex" and st.get("grp") == grp_key:
+                icon = "✅" if k in previews else "⚪"
+                mk.add(telebot.types.InlineKeyboardButton(f"{icon} {st['nome']}", callback_data=f"est_view_{k}"))
+        back_label = {"pt": "⬅️ Voltar", "en": "⬅️ Back", "es": "⬅️ Volver"}.get(lang, "⬅️ Voltar")
+        mk.add(telebot.types.InlineKeyboardButton(back_label, callback_data="est_cat_unisex"))
+        try:
+            bot.edit_message_text(f"{grp['nome']}", call.message.chat.id, call.message.message_id,
+                                  reply_markup=mk, parse_mode='HTML')
+        except Exception:
+            bot.send_message(call.message.chat.id, grp['nome'], reply_markup=mk, parse_mode='HTML')
+        return
+
+    if data.startswith("est_sto_"):
+        story_key = data.replace("est_sto_", "")
+        story = PADRAO_STORIES.get(story_key)
+        if not story:
+            bot.answer_callback_query(call.id, "História inválida.")
+            return
+        previews = load_json(STYLE_PREVIEWS_FILE)
+        mk = telebot.types.InlineKeyboardMarkup(row_width=1)
+        for sk in story["scenes"]:
+            st = PADRAO_STYLES.get(sk)
+            if st:
+                icon = "✅" if sk in previews else "⚪"
+                mk.add(telebot.types.InlineKeyboardButton(f"{icon} {st['nome']}", callback_data=f"est_view_{sk}"))
+        back_label = {"pt": "⬅️ Voltar", "en": "⬅️ Back", "es": "⬅️ Volver"}.get(lang, "⬅️ Voltar")
+        mk.add(telebot.types.InlineKeyboardButton(back_label, callback_data=f"est_cat_{story['cat']}"))
+        try:
+            bot.edit_message_text(story['nome'], call.message.chat.id, call.message.message_id,
+                                  reply_markup=mk, parse_mode='HTML')
+        except Exception:
+            bot.send_message(call.message.chat.id, story['nome'], reply_markup=mk, parse_mode='HTML')
+        return
+
+    if data.startswith("est_view_"):
+        style_key = data.replace("est_view_", "")
+        style = PADRAO_STYLES.get(style_key)
+        if not style:
+            bot.answer_callback_query(call.id, "Estilo inválido.")
+            return
+        preview = get_style_preview(style_key)
+
+        # Determina para onde voltar
+        cat = style.get("cat", "men")
+        if cat == "unisex" and style.get("grp"):
+            back_cb = f"est_grp_{style['grp']}"
+        elif cat in ("couple", "comic") and style.get("story"):
+            back_cb = f"est_sto_{style['story']}"
+        else:
+            back_cb = f"est_cat_{cat}"
+
+        cap_lines = {
+            "pt": [
+                f"🎨 <b>{style['nome']}</b>",
+                "",
+                f"Categoria: <i>{cat}</i>" + (f" / {PADRAO_UNISEX_GROUPS[style['grp']]['nome']}" if style.get('grp') and style.get('grp') in PADRAO_UNISEX_GROUPS else ""),
+                f"💳 Custo: {MODELO_PADRAO['custo']} créditos",
+                "",
+                "💡 Para usar este estilo: envia uma foto <b>sem legenda</b> no chat, clica em <b>Padrão</b> e escolhe esta opção.",
+            ],
+            "en": [
+                f"🎨 <b>{style['nome']}</b>",
+                "",
+                f"Category: <i>{cat}</i>",
+                f"💳 Cost: {MODELO_PADRAO['custo']} credits",
+                "",
+                "💡 To use: send a photo <b>without caption</b>, tap <b>Standard</b> and pick this style.",
+            ],
+            "es": [
+                f"🎨 <b>{style['nome']}</b>",
+                "",
+                f"Categoría: <i>{cat}</i>",
+                f"💳 Costo: {MODELO_PADRAO['custo']} créditos",
+                "",
+                "💡 Para usar: envía una foto <b>sin descripción</b>, toca <b>Estándar</b> y elige.",
+            ],
+        }
+        caption = "\n".join(cap_lines.get(lang, cap_lines["pt"]))
+
+        mk = telebot.types.InlineKeyboardMarkup(row_width=1)
+        back_label = {"pt": "⬅️ Voltar", "en": "⬅️ Back", "es": "⬅️ Volver"}.get(lang, "⬅️ Voltar")
+        mk.add(telebot.types.InlineKeyboardButton(back_label, callback_data=back_cb))
+
+        # Apaga a mensagem de menu antes de enviar foto/preview
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+
+        if preview and preview.get("file_id"):
+            try:
+                bot.send_photo(call.message.chat.id, preview["file_id"],
+                               caption=caption, reply_markup=mk, parse_mode='HTML')
+                return
+            except Exception as e:
+                logger.warning(f"Falha a enviar preview file_id ({style_key}): {e}")
+
+        # Sem preview → mensagem de placeholder
+        nopreview = {
+            "pt": "\n\n📭 <i>Ainda sem preview real. Sê o primeiro a publicar este estilo na galeria <b>@RemakePixel_Gallery</b> e a tua imagem fica aqui!</i>",
+            "en": "\n\n📭 <i>No real preview yet. Be the first to publish this style to <b>@RemakePixel_Gallery</b> and your image will appear here!</i>",
+            "es": "\n\n📭 <i>Sin preview real aún. ¡Sé el primero en publicar este estilo en <b>@RemakePixel_Gallery</b>!</i>",
+        }
+        bot.send_message(call.message.chat.id, caption + nopreview.get(lang, nopreview["pt"]),
+                         reply_markup=mk, parse_mode='HTML')
+
+
+
 @bot.message_handler(commands=['wizard'])
 def cmd_wizard(message):
     """Assistente de criação guiado"""
@@ -5442,14 +6418,14 @@ def handle_photo(message):
     if caption and len(caption.strip()) >= 3:
         markup = telebot.types.InlineKeyboardMarkup(row_width=1)
         texts = {
-            "pt": f"📸 <b>Foto recebida!</b>\n\n💬 Descrição: <i>{caption[:80]}</i>\n\n<b>Escolha o modelo:</b>\n\n🎨 <b>Padrão</b> (3 cred) — Edita conforme descrição\n✨ <b>Pro</b> (5 cred) — Melhoria fotorrealista automática\n🎭 <b>Artístico</b> (2 cred) — Transforma em estilos artísticos\n\n💳 Créditos: <code>{creditos}</code>",
-            "en": f"📸 <b>Photo received!</b>\n\n💬 Description: <i>{caption[:80]}</i>\n\n<b>Choose model:</b>\n\n🎨 <b>Standard</b> (3 cred) — Edits by description\n✨ <b>Pro</b> (5 cred) — Auto photorealistic enhancement\n🎭 <b>Artistic</b> (2 cred) — Transform to art styles\n\n💳 Credits: <code>{creditos}</code>",
-            "es": f"📸 <b>Foto recibida!</b>\n\n💬 Descripción: <i>{caption[:80]}</i>\n\n<b>Elige modelo:</b>\n\n🎨 <b>Estándar</b> (3 cred) — Edita según descripción\n✨ <b>Pro</b> (5 cred) — Mejora fotorrealista automática\n🎭 <b>Artístico</b> (2 cred) — Transforma en estilos artísticos\n\n💳 Créditos: <code>{creditos}</code>"
+            "pt": f"📸 <b>Foto recebida!</b>\n\n💬 Descrição: <i>{caption[:80]}</i>\n\n<b>Escolha o modelo:</b>\n\n🎨 <b>Padrão</b> ({MODELO_PADRAO['custo']} cred) — Edita conforme descrição\n✨ <b>Pro</b> ({MODELO_PRO['custo']} cred) — Melhoria fotorrealista automática\n🎭 <b>Artístico</b> ({MODELO_ARTISTICO['custo']} cred) — Transforma em estilos artísticos\n\n💳 Créditos: <code>{creditos}</code>",
+            "en": f"📸 <b>Photo received!</b>\n\n💬 Description: <i>{caption[:80]}</i>\n\n<b>Choose model:</b>\n\n🎨 <b>Standard</b> ({MODELO_PADRAO['custo']} cred) — Edits by description\n✨ <b>Pro</b> ({MODELO_PRO['custo']} cred) — Auto photorealistic enhancement\n🎭 <b>Artistic</b> ({MODELO_ARTISTICO['custo']} cred) — Transform to art styles\n\n💳 Credits: <code>{creditos}</code>",
+            "es": f"📸 <b>Foto recibida!</b>\n\n💬 Descripción: <i>{caption[:80]}</i>\n\n<b>Elige modelo:</b>\n\n🎨 <b>Estándar</b> ({MODELO_PADRAO['custo']} cred) — Edita según descripción\n✨ <b>Pro</b> ({MODELO_PRO['custo']} cred) — Mejora fotorrealista automática\n🎭 <b>Artístico</b> ({MODELO_ARTISTICO['custo']} cred) — Transforma en estilos artísticos\n\n💳 Créditos: <code>{creditos}</code>"
         }
         markup.add(
-            telebot.types.InlineKeyboardButton("🎨 Padrão · 3 créditos", callback_data="photo_model_padrao"),
-            telebot.types.InlineKeyboardButton("✨ Pro · 5 créditos", callback_data="photo_model_pro"),
-            telebot.types.InlineKeyboardButton("🎭 Artístico · 2 créditos", callback_data="photo_model_artistico"),
+            telebot.types.InlineKeyboardButton(f"🎨 Padrão · {MODELO_PADRAO['custo']} créditos", callback_data="photo_model_padrao"),
+            telebot.types.InlineKeyboardButton(f"✨ Pro · {MODELO_PRO['custo']} créditos", callback_data="photo_model_pro"),
+            telebot.types.InlineKeyboardButton(f"🎭 Artístico · {MODELO_ARTISTICO['custo']} créditos", callback_data="photo_model_artistico"),
             telebot.types.InlineKeyboardButton("❌ Cancelar", callback_data="photo_model_cancel")
         )
         bot.reply_to(message, texts.get(lang, texts["pt"]), reply_markup=markup, parse_mode='HTML')
@@ -5459,27 +6435,36 @@ def handle_photo(message):
         user_states[user_id] = "awaiting_edit_prompt"
         ask_texts = {
             "pt": ("📸 <b>Foto recebida!</b>\n\n"
-                   "✍️ Por favor, escreva agora <b>como deseja editar a foto</b>.\n\n"
+                   "✍️ Escreve <b>como queres editar a foto</b>\n"
                    "<i>Ex: \"remover o fundo\", \"transformar em anime\", \"melhorar qualidade\"...</i>\n\n"
-                   "💡 Pode também tocar em <b>✨ Editar sem descrição</b> para usar o Modelo Pro (melhoria automática)."),
+                   f"🎨 <b>Ou clica em Padrão</b> para escolher entre <b>65+ estilos prontos</b> (Homens, Mulheres, Unissex, Flyers, Casais, Comics)\n"
+                   "✨ <b>Ou clica em Pro</b> para melhoria fotorrealista automática"),
             "en": ("📸 <b>Photo received!</b>\n\n"
-                   "✍️ Please type now <b>how you want to edit the photo</b>.\n\n"
+                   "✍️ Type <b>how you want to edit the photo</b>\n"
                    "<i>Ex: \"remove background\", \"make it anime\", \"enhance quality\"...</i>\n\n"
-                   "💡 Or tap <b>✨ Edit without description</b> to use Pro model (auto enhance)."),
+                   f"🎨 <b>Or tap Standard</b> to pick from <b>65+ ready styles</b> (Men, Women, Unisex, Flyers, Couples, Comics)\n"
+                   "✨ <b>Or tap Pro</b> for automatic photorealistic enhancement"),
             "es": ("📸 <b>Foto recibida!</b>\n\n"
-                   "✍️ Por favor, escribe ahora <b>cómo quieres editar la foto</b>.\n\n"
+                   "✍️ Escribe <b>cómo quieres editar la foto</b>\n"
                    "<i>Ej: \"quitar fondo\", \"convertir en anime\", \"mejorar calidad\"...</i>\n\n"
-                   "💡 O toca <b>✨ Editar sin descripción</b> para usar el Pro (mejora automática).")
+                   f"🎨 <b>O toca Estándar</b> para elegir entre <b>65+ estilos listos</b> (Hombres, Mujeres, Unisex, Flyers, Parejas, Comics)\n"
+                   "✨ <b>O toca Pro</b> para mejora fotorrealista automática")
         }
         markup = telebot.types.InlineKeyboardMarkup(row_width=1)
-        skip_label = {"pt": "✨ Editar sem descrição (Pro · 5 cred)",
-                      "en": "✨ Edit without description (Pro · 5 cred)",
-                      "es": "✨ Editar sin descripción (Pro · 5 cred)"}
+        padrao_label = {"pt": f"🎨 Padrão · 65+ estilos ({MODELO_PADRAO['custo']} cred)",
+                        "en": f"🎨 Standard · 65+ styles ({MODELO_PADRAO['custo']} cred)",
+                        "es": f"🎨 Estándar · 65+ estilos ({MODELO_PADRAO['custo']} cred)"}
+        skip_label = {"pt": f"✨ Pro · sem descrição ({MODELO_PRO['custo']} cred)",
+                      "en": f"✨ Pro · no description ({MODELO_PRO['custo']} cred)",
+                      "es": f"✨ Pro · sin descripción ({MODELO_PRO['custo']} cred)"}
+        artistico_label = {"pt": f"🎭 Artístico · 33 estilos ({MODELO_ARTISTICO['custo']} cred)",
+                           "en": f"🎭 Artistic · 33 styles ({MODELO_ARTISTICO['custo']} cred)",
+                           "es": f"🎭 Artístico · 33 estilos ({MODELO_ARTISTICO['custo']} cred)"}
         cancel_label = {"pt": "❌ Cancelar", "en": "❌ Cancel", "es": "❌ Cancelar"}
-        markup.add(
-            telebot.types.InlineKeyboardButton(skip_label.get(lang, skip_label["pt"]), callback_data="photo_model_pro"),
-            telebot.types.InlineKeyboardButton(cancel_label.get(lang, cancel_label["pt"]), callback_data="photo_model_cancel")
-        )
+        markup.add(telebot.types.InlineKeyboardButton(padrao_label.get(lang, padrao_label["pt"]), callback_data="photo_model_padrao"))
+        markup.add(telebot.types.InlineKeyboardButton(skip_label.get(lang, skip_label["pt"]), callback_data="photo_model_pro"))
+        markup.add(telebot.types.InlineKeyboardButton(artistico_label.get(lang, artistico_label["pt"]), callback_data="photo_model_artistico"))
+        markup.add(telebot.types.InlineKeyboardButton(cancel_label.get(lang, cancel_label["pt"]), callback_data="photo_model_cancel"))
         bot.reply_to(message, ask_texts.get(lang, ask_texts["pt"]), reply_markup=markup, parse_mode='HTML')
 
 # ==================== HANDLERS DE MODELO DE FOTO ====================
@@ -5612,15 +6597,17 @@ def callback_multi_model(call):
             "es": f"✨ <b>Modelo Pro — Combinar fotos</b> ({MODELO_PRO['custo']} créd)\n\nElige cómo combinar:"
         }
         btn_texts = {
-            "pt": ("✏️ Personalizar", "📸 Deixa mais realista", "❌ Cancelar"),
-            "en": ("✏️ Custom prompt", "📸 Make it more realistic", "❌ Cancel"),
-            "es": ("✏️ Personalizar", "📸 Hazlo más realista", "❌ Cancelar")
+            "pt": ("✏️ Personalizar", "📷 Deixa mais realista", "🎭 Estilo & Humor", "✨ Enhancements Avançados", "❌ Cancelar"),
+            "en": ("✏️ Custom prompt", "📷 Make it more realistic", "🎭 Style & Mood", "✨ Advanced Enhancements", "❌ Cancel"),
+            "es": ("✏️ Personalizar", "📷 Hazlo más realista", "🎭 Estilo y Humor", "✨ Enhancements Avanzados", "❌ Cancelar")
         }
-        b1, b2, b3 = btn_texts.get(lang, btn_texts["pt"])
+        b1, b2, b3, b4, b5 = btn_texts.get(lang, btn_texts["pt"])
         markup = telebot.types.InlineKeyboardMarkup(row_width=1)
         markup.add(telebot.types.InlineKeyboardButton(b1, callback_data="pro_m_custom"))
         markup.add(telebot.types.InlineKeyboardButton(b2, callback_data="pro_m_realista"))
-        markup.add(telebot.types.InlineKeyboardButton(b3, callback_data="pro_m_cancel"))
+        markup.add(telebot.types.InlineKeyboardButton(b3, callback_data="pro_m_styles"))
+        markup.add(telebot.types.InlineKeyboardButton(b4, callback_data="pro_m_enh"))
+        markup.add(telebot.types.InlineKeyboardButton(b5, callback_data="pro_m_cancel"))
         bot.send_message(call.message.chat.id, menu_texts.get(lang, menu_texts["pt"]), reply_markup=markup, parse_mode='HTML')
     elif action == "artistico":
         # Mostrar estilos artisticos
@@ -6119,100 +7106,73 @@ def callback_photo_model(call):
             "es": f"✨ <b>Modelo Pro</b> ({MODELO_PRO['custo']} créd)\n\nElige cómo editar:"
         }
         btn_texts = {
-            "pt": ("✏️ Personalizar", "📸 Deixa mais realista", "❌ Cancelar"),
-            "en": ("✏️ Custom prompt", "📸 Make it more realistic", "❌ Cancel"),
-            "es": ("✏️ Personalizar", "📸 Hazlo más realista", "❌ Cancelar")
+            "pt": ("✏️ Personalizar", "📷 Deixa mais realista", "🎭 Estilo & Humor", "✨ Enhancements Avançados", "❌ Cancelar"),
+            "en": ("✏️ Custom prompt", "📷 Make it more realistic", "🎭 Style & Mood", "✨ Advanced Enhancements", "❌ Cancel"),
+            "es": ("✏️ Personalizar", "📷 Hazlo más realista", "🎭 Estilo y Humor", "✨ Enhancements Avanzados", "❌ Cancelar")
         }
-        b1, b2, b3 = btn_texts.get(lang, btn_texts["pt"])
+        b1, b2, b3, b4, b5 = btn_texts.get(lang, btn_texts["pt"])
         markup = telebot.types.InlineKeyboardMarkup(row_width=1)
         markup.add(telebot.types.InlineKeyboardButton(b1, callback_data="pro_s_custom"))
         markup.add(telebot.types.InlineKeyboardButton(b2, callback_data="pro_s_realista"))
-        markup.add(telebot.types.InlineKeyboardButton(b3, callback_data="pro_s_cancel"))
+        markup.add(telebot.types.InlineKeyboardButton(b3, callback_data="pro_s_styles"))
+        markup.add(telebot.types.InlineKeyboardButton(b4, callback_data="pro_s_enh"))
+        markup.add(telebot.types.InlineKeyboardButton(b5, callback_data="pro_s_cancel"))
         bot.send_message(call.message.chat.id, menu_texts.get(lang, menu_texts["pt"]), reply_markup=markup, parse_mode='HTML')
         return
     
     elif action == "padrao":
-        # Modelo Padrao - 1 credito
+        # Modelo Padrao - 10 creditos
         caption_text = photo_data.get("caption", "")
-        
-        if not caption_text or len(caption_text.strip()) < 3:
-            # Mostrar presets + opcao personalizada
-            pending_photos[user_id] = photo_data
+
+        if caption_text and len(caption_text.strip()) >= 3:
+            # COM legenda → processa direto, sem menu adicional
+            if get_user_credits(user_id) < MODELO_PADRAO["custo"]:
+                bot.answer_callback_query(call.id, "Créditos insuficientes!", show_alert=True)
+                return
             try:
                 bot.delete_message(call.message.chat.id, call.message.message_id)
-            except:
+            except Exception:
                 pass
-            markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-            for key, preset in PRESETS_PADRAO.items():
-                markup.add(telebot.types.InlineKeyboardButton(preset["nome"], callback_data=f"preset_{key}"))
-            markup.add(telebot.types.InlineKeyboardButton("❌ Cancelar", callback_data="preset_cancel"))
-            bot.send_message(call.message.chat.id, f"🎨 <b>Modelo Padrão</b> ({MODELO_PADRAO['custo']} cred)\n\nEscolha ou escreva o que deseja:", reply_markup=markup, parse_mode='HTML')
-            user_states[user_id] = "awaiting_edit_prompt"
+            Thread(target=execute_padrao,
+                   args=(call.message.chat.id, user_id, lang, photo_data, caption_text.strip(), None)).start()
             return
-        
-        # Tem legenda, processar direto
-        creditos = get_user_credits(user_id)
-        if creditos < MODELO_PADRAO["custo"]:
-            bot.answer_callback_query(call.id, "Créditos insuficientes!")
-            return
-        
-        if not use_credit(user_id, MODELO_PADRAO["custo"]):
-            return
-        
+
+        # SEM legenda → mostra menu com presets rápidos + botão "🎨 Escolher Estilo"
+        pending_photos[user_id] = photo_data
         try:
             bot.delete_message(call.message.chat.id, call.message.message_id)
-        except:
+        except Exception:
             pass
-        
-        proc_texts = {
-            "pt": "🎨 Processando imagem...",
-            "en": "🎨 Processing image...",
-            "es": "🎨 Procesando imagen..."
+
+        title_texts = {
+            "pt": (f"🎨 <b>Modelo Padrão</b> ({MODELO_PADRAO['custo']} cred)\n\n"
+                   f"Como queres editar a foto?\n\n"
+                   f"• Toca num <b>preset rápido</b> abaixo\n"
+                   f"• Ou clica em <b>🎨 Escolher Estilo</b> para 65+ estilos prontos\n"
+                   f"• Ou escreve tu mesmo o prompt no chat"),
+            "en": (f"🎨 <b>Standard Model</b> ({MODELO_PADRAO['custo']} cred)\n\n"
+                   f"How do you want to edit the photo?\n\n"
+                   f"• Tap a <b>quick preset</b> below\n"
+                   f"• Or tap <b>🎨 Choose Style</b> for 65+ ready styles\n"
+                   f"• Or just type your own prompt"),
+            "es": (f"🎨 <b>Modelo Estándar</b> ({MODELO_PADRAO['custo']} cred)\n\n"
+                   f"¿Cómo quieres editar la foto?\n\n"
+                   f"• Toca un <b>preset rápido</b> abajo\n"
+                   f"• O toca <b>🎨 Elegir Estilo</b> para 65+ estilos listos\n"
+                   f"• O escribe tu propio prompt"),
         }
-        proc_msg = bot.send_message(call.message.chat.id, proc_texts.get(lang, proc_texts["pt"]))
-        
-        try:
-            file_info = bot.get_file(photo_data["file_id"])
-            downloaded_file = bot.download_file(file_info.file_path)
-            image_base64 = base64.b64encode(downloaded_file).decode('utf-8')
-            image_data_url = f"data:image/jpeg;base64,{image_base64}"
-            
-            prompt = caption_text.strip()
-            style_settings = get_user_style_settings(user_id)
-            aspect_ratio = ASPECT_RATIOS[style_settings["aspect_ratio"]]["ratio"]
-            urls = gerar_imagem_modelo(prompt, aspect_ratio, image_input=image_data_url, num_outputs=1)
-            
-            bot.delete_message(call.message.chat.id, proc_msg.message_id)
-            
-            for url in urls:
-                img_data = requests.get(url, timeout=60).content
-                creation_id = add_to_history(user_id, "edit", prompt, url)
-                creditos_restantes = get_user_credits(user_id)
-                
-                caption_texts = {
-                    "pt": f"✅ Imagem editada!\n🤖 Modelo: Padrao\n💳 Créditos restantes: <code>{creditos_restantes}</code>",
-                    "en": f"✅ Image edited!\n🤖 Model: Standard\n💳 Credits remaining: <code>{creditos_restantes}</code>",
-                    "es": f"✅ Imagen editada!\n🤖 Modelo: Estandar\n💳 Créditos restantes: <code>{creditos_restantes}</code>"
-                }
-                bot.send_photo(call.message.chat.id, img_data, caption=caption_texts.get(lang, caption_texts["pt"]),
-                             reply_markup=creation_actions_keyboard(creation_id, lang), parse_mode='HTML')
-            
-            update_user_stats(user_id, "total_edits")
-            logger.info(f"Edicao Padrao para user {user_id}")
-            
-        except Exception as e:
-            add_credits(user_id, MODELO_PADRAO["custo"], "reembolso")
-            save_user_error(user_id, "edicao_padrao", str(e), "Edicao Padrao")
-            diagnose_and_notify(e, "edicao_padrao")
-            error_texts = {
-                "pt": "❌ Erro ao processar. Crédito reembolsado.",
-                "en": "❌ Processing error. Credit refunded.",
-                "es": "❌ Error al procesar. Crédito reembolsado."
-            }
-            try:
-                bot.edit_message_text(error_texts.get(lang, error_texts["pt"]), call.message.chat.id, proc_msg.message_id)
-            except:
-                bot.send_message(call.message.chat.id, error_texts.get(lang, error_texts["pt"]))
+        markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+        # Botão de destaque "🎨 Escolher Estilo" no topo
+        styles_label = {"pt": "🎨 Escolher Estilo (65+)", "en": "🎨 Choose Style (65+)", "es": "🎨 Elegir Estilo (65+)"}.get(lang, "🎨 Escolher Estilo (65+)")
+        markup.add(telebot.types.InlineKeyboardButton(styles_label, callback_data="padflow_styles"))
+        # Presets rápidos
+        for key, preset in PRESETS_PADRAO.items():
+            markup.add(telebot.types.InlineKeyboardButton(preset["nome"], callback_data=f"preset_{key}"))
+        markup.add(telebot.types.InlineKeyboardButton("❌ Cancelar", callback_data="preset_cancel"))
+        bot.send_message(call.message.chat.id, title_texts.get(lang, title_texts["pt"]),
+                         reply_markup=markup, parse_mode='HTML')
+        user_states[user_id] = "awaiting_edit_prompt"
+        return
     
     elif action == "artistico":
         # Modelo Artistico - mostrar estilos
@@ -6229,7 +7189,348 @@ def callback_photo_model(call):
                 row.append(telebot.types.InlineKeyboardButton(ESTILOS_ARTISTICOS[key]["nome"], callback_data=f"artstyle_{key}"))
             markup.row(*row)
         markup.add(telebot.types.InlineKeyboardButton("❌ Cancelar", callback_data="artstyle_cancel"))
-        bot.send_message(call.message.chat.id, "🎭 <b>Escolha o estilo:</b> (2 cred)", reply_markup=markup, parse_mode='HTML')
+        bot.send_message(call.message.chat.id, f"🎭 <b>Escolha o estilo:</b> ({MODELO_ARTISTICO['custo']} cred)", reply_markup=markup, parse_mode='HTML')
+
+
+
+# ==================== MODELO PADRÃO — FLUXO COM ESCOLHER ESTILO ====================
+def execute_padrao(chat_id, user_id, lang, photo_data, prompt_text, style_nome=None, style_key=None):
+    """Executa edição com Modelo Padrão (Grok). Debita 10 cred, processa, refund em falha.
+    style_key: chave do estilo aplicado (ex: 'u_joker') — usado para guardar preview ao publicar."""
+    if not use_credit(user_id, MODELO_PADRAO["custo"]):
+        bot.send_message(chat_id, "❌ Créditos insuficientes!")
+        return
+
+    proc_texts = {
+        "pt": "🎨 Processando imagem...",
+        "en": "🎨 Processing image...",
+        "es": "🎨 Procesando imagen..."
+    }
+    proc_msg = bot.send_message(chat_id, proc_texts.get(lang, proc_texts["pt"]))
+
+    try:
+        file_info = bot.get_file(photo_data["file_id"])
+        downloaded_file = bot.download_file(file_info.file_path)
+        image_base64 = base64.b64encode(downloaded_file).decode('utf-8')
+        image_data_url = f"data:image/jpeg;base64,{image_base64}"
+
+        style_settings = get_user_style_settings(user_id)
+        aspect_ratio = ASPECT_RATIOS[style_settings["aspect_ratio"]]["ratio"]
+        urls = gerar_imagem_modelo(prompt_text, aspect_ratio, image_input=image_data_url, num_outputs=1)
+
+        try:
+            bot.delete_message(chat_id, proc_msg.message_id)
+        except Exception:
+            pass
+
+        style_line = f"\n🎯 Estilo: {style_nome}" if style_nome else ""
+        for url in urls:
+            img_data = requests.get(url, timeout=60).content
+            creation_id = add_to_history(user_id, "edit", prompt_text, url)
+            # Linka este creation_id ao estilo aplicado (para auto-coleta de preview na galeria)
+            if style_key:
+                link_creation_to_style(creation_id, style_key)
+            creditos_restantes = get_user_credits(user_id)
+            caption_texts = {
+                "pt": f"✅ <b>Imagem editada!</b>\n🤖 Modelo: Padrão{style_line}\n💳 Créditos restantes: <code>{creditos_restantes}</code>",
+                "en": f"✅ <b>Image edited!</b>\n🤖 Model: Standard{style_line}\n💳 Credits remaining: <code>{creditos_restantes}</code>",
+                "es": f"✅ <b>Imagen editada!</b>\n🤖 Modelo: Estándar{style_line}\n💳 Créditos restantes: <code>{creditos_restantes}</code>"
+            }
+            bot.send_photo(chat_id, img_data, caption=caption_texts.get(lang, caption_texts["pt"]),
+                           reply_markup=creation_actions_keyboard(creation_id, lang), parse_mode='HTML')
+
+        update_user_stats(user_id, "total_edits")
+        logger.info(f"Edicao Padrao user {user_id} (estilo={style_nome or 'direto'})")
+    except Exception as e:
+        add_credits(user_id, MODELO_PADRAO["custo"], "reembolso")
+        save_user_error(user_id, "edicao_padrao", str(e), "Edicao Padrao")
+        diagnose_and_notify(e, "edicao_padrao")
+        error_texts = {
+            "pt": "❌ Erro ao processar. Crédito reembolsado.",
+            "en": "❌ Processing error. Credit refunded.",
+            "es": "❌ Error al procesar. Crédito reembolsado."
+        }
+        try:
+            bot.edit_message_text(error_texts.get(lang, error_texts["pt"]), chat_id, proc_msg.message_id)
+        except Exception:
+            bot.send_message(chat_id, error_texts.get(lang, error_texts["pt"]))
+
+
+def _padrao_categories_markup(lang):
+    cat_texts = {
+        "pt": [("👨 Para Homens", "padcat_men"), ("👩 Para Mulheres", "padcat_women"),
+               ("👤 Unissex", "padcat_unisex"), ("📋 Flyers Recrutamento", "padcat_flyer"),
+               ("💑 Casais (envia 2 fotos)", "padcat_couple"), ("📚 Comics / Histórias", "padcat_comic"),
+               ("⬅️ Voltar", "padflow_back")],
+        "en": [("👨 For Men", "padcat_men"), ("👩 For Women", "padcat_women"),
+               ("👤 Unisex", "padcat_unisex"), ("📋 Recruitment Flyers", "padcat_flyer"),
+               ("💑 Couples (send 2 photos)", "padcat_couple"), ("📚 Comics / Stories", "padcat_comic"),
+               ("⬅️ Back", "padflow_back")],
+        "es": [("👨 Para Hombres", "padcat_men"), ("👩 Para Mujeres", "padcat_women"),
+               ("👤 Unisex", "padcat_unisex"), ("📋 Flyers Reclutamiento", "padcat_flyer"),
+               ("💑 Parejas (envía 2 fotos)", "padcat_couple"), ("📚 Comics / Historias", "padcat_comic"),
+               ("⬅️ Volver", "padflow_back")],
+    }
+    items = cat_texts.get(lang, cat_texts["pt"])
+    mk = telebot.types.InlineKeyboardMarkup(row_width=1)
+    for label, cb in items:
+        mk.add(telebot.types.InlineKeyboardButton(label, callback_data=cb))
+    return mk
+
+
+def _padrao_styles_markup_for_cat(cat, lang):
+    mk = telebot.types.InlineKeyboardMarkup(row_width=1)
+    if cat == "unisex":
+        for grp_key, grp in PADRAO_UNISEX_GROUPS.items():
+            mk.add(telebot.types.InlineKeyboardButton(grp["nome"], callback_data=f"padgrp_{grp_key}"))
+    elif cat in ("couple", "comic"):
+        for story_key, story in PADRAO_STORIES.items():
+            if story["cat"] == cat:
+                mk.add(telebot.types.InlineKeyboardButton(story["nome"], callback_data=f"padsto_{story_key}"))
+    else:
+        for key, st in PADRAO_STYLES.items():
+            if st.get("cat") == cat:
+                mk.add(telebot.types.InlineKeyboardButton(st["nome"], callback_data=f"padst_{key}"))
+    back_label = {"pt": "⬅️ Voltar", "en": "⬅️ Back", "es": "⬅️ Volver"}.get(lang, "⬅️ Voltar")
+    mk.add(telebot.types.InlineKeyboardButton(back_label, callback_data="padflow_styles"))
+    return mk
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("padflow_"))
+def callback_padflow(call):
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    action = call.data.replace("padflow_", "")
+
+    if action == "cancel":
+        pending_photos.pop(user_id, None)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        bot.send_message(call.message.chat.id, {"pt": "❌ Cancelado.", "en": "❌ Cancelled.", "es": "❌ Cancelado."}.get(lang, "❌ Cancelado."))
+        return
+
+    if user_id not in pending_photos:
+        bot.answer_callback_query(call.id, "Foto expirada!")
+        return
+
+    photo_data = pending_photos[user_id]
+    caption = (photo_data.get("caption") or "").strip()
+
+    if action == "back":
+        # Voltar ao menu Padrão (presets rápidos + Escolher Estilo)
+        title_texts = {
+            "pt": (f"🎨 <b>Modelo Padrão</b> ({MODELO_PADRAO['custo']} cred)\n\n"
+                   f"Como queres editar a foto?\n\n"
+                   f"• Toca num <b>preset rápido</b> abaixo\n"
+                   f"• Ou clica em <b>🎨 Escolher Estilo</b> para 65+ estilos prontos\n"
+                   f"• Ou escreve tu mesmo o prompt no chat"),
+            "en": (f"🎨 <b>Standard Model</b> ({MODELO_PADRAO['custo']} cred)\n\n"
+                   f"How do you want to edit the photo?\n\n"
+                   f"• Tap a <b>quick preset</b> below\n"
+                   f"• Or tap <b>🎨 Choose Style</b> for 65+ ready styles\n"
+                   f"• Or just type your own prompt"),
+            "es": (f"🎨 <b>Modelo Estándar</b> ({MODELO_PADRAO['custo']} cred)\n\n"
+                   f"¿Cómo quieres editar la foto?\n\n"
+                   f"• Toca un <b>preset rápido</b> abajo\n"
+                   f"• O toca <b>🎨 Elegir Estilo</b> para 65+ estilos listos\n"
+                   f"• O escribe tu propio prompt"),
+        }
+        mk = telebot.types.InlineKeyboardMarkup(row_width=2)
+        styles_label = {"pt": "🎨 Escolher Estilo (65+)", "en": "🎨 Choose Style (65+)", "es": "🎨 Elegir Estilo (65+)"}.get(lang, "🎨 Escolher Estilo (65+)")
+        mk.add(telebot.types.InlineKeyboardButton(styles_label, callback_data="padflow_styles"))
+        for key, preset in PRESETS_PADRAO.items():
+            mk.add(telebot.types.InlineKeyboardButton(preset["nome"], callback_data=f"preset_{key}"))
+        mk.add(telebot.types.InlineKeyboardButton("❌ Cancelar", callback_data="preset_cancel"))
+        try:
+            bot.edit_message_text(title_texts.get(lang, title_texts["pt"]),
+                                  call.message.chat.id, call.message.message_id,
+                                  reply_markup=mk, parse_mode='HTML')
+        except Exception:
+            pass
+        user_states[user_id] = "awaiting_edit_prompt"
+        return
+
+    if action == "direct":
+        # (Legado) Continuar com descrição — mantido para back-compat se houver mensagens antigas
+        photo_data = pending_photos.get(user_id)
+        if not photo_data:
+            return
+        caption = (photo_data.get("caption") or "").strip()
+        if not caption:
+            bot.answer_callback_query(call.id, "Sem descrição para usar.")
+            return
+        if get_user_credits(user_id) < MODELO_PADRAO["custo"]:
+            bot.answer_callback_query(call.id, "Créditos insuficientes!", show_alert=True)
+            return
+        pending_photos.pop(user_id, None)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        Thread(target=execute_padrao,
+               args=(call.message.chat.id, user_id, lang, photo_data, caption, None)).start()
+        return
+
+    if action == "styles":
+        title = {
+            "pt": "🎨 <b>Escolher Estilo</b>\n\nEscolhe a categoria:",
+            "en": "🎨 <b>Choose Style</b>\n\nPick a category:",
+            "es": "🎨 <b>Elegir Estilo</b>\n\nElige la categoría:",
+        }
+        try:
+            bot.edit_message_text(title.get(lang, title["pt"]), call.message.chat.id, call.message.message_id,
+                                  reply_markup=_padrao_categories_markup(lang), parse_mode='HTML')
+        except Exception:
+            bot.send_message(call.message.chat.id, title.get(lang, title["pt"]),
+                             reply_markup=_padrao_categories_markup(lang), parse_mode='HTML')
+        return
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("padcat_"))
+def callback_padcat(call):
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    cat = call.data.replace("padcat_", "")
+
+    if user_id not in pending_photos:
+        bot.answer_callback_query(call.id, "Foto expirada!")
+        return
+
+    if cat == "couple":
+        warn = {
+            "pt": "💑 <b>Casais</b>\n\n💡 Para o melhor resultado, envia <b>2 fotos juntas</b> (tu + a outra pessoa) ou <b>1 foto dos dois</b>. Caso contrário a imagem pode sair incompleta.\n\nEscolhe a história:",
+            "en": "💑 <b>Couples</b>\n\n💡 For the best result, send <b>2 photos together</b> (you + the other person) or <b>1 photo of both</b>. Otherwise the image may come out incomplete.\n\nPick the story:",
+            "es": "💑 <b>Parejas</b>\n\n💡 Para el mejor resultado, envía <b>2 fotos juntas</b> (tú + la otra persona) o <b>1 foto de ambos</b>. De lo contrario la imagen puede salir incompleta.\n\nElige la historia:",
+        }
+        title = warn.get(lang, warn["pt"])
+    else:
+        titles = {
+            "men":     {"pt": "👨 <b>Para Homens</b>\n\nEscolhe o estilo:", "en": "👨 <b>For Men</b>\n\nPick a style:", "es": "👨 <b>Para Hombres</b>\n\nElige el estilo:"},
+            "women":   {"pt": "👩 <b>Para Mulheres</b>\n\nEscolhe o estilo:", "en": "👩 <b>For Women</b>\n\nPick a style:", "es": "👩 <b>Para Mujeres</b>\n\nElige el estilo:"},
+            "unisex":  {"pt": "👤 <b>Unissex</b>\n\nEscolhe o tema:", "en": "👤 <b>Unisex</b>\n\nPick a theme:", "es": "👤 <b>Unisex</b>\n\nElige el tema:"},
+            "flyer":   {"pt": "📋 <b>Flyers Recrutamento</b>\n\nEscolhe o flyer:", "en": "📋 <b>Recruitment Flyers</b>\n\nPick the flyer:", "es": "📋 <b>Flyers Reclutamiento</b>\n\nElige el flyer:"},
+            "comic":   {"pt": "📚 <b>Comics / Histórias</b>\n\nEscolhe a história:", "en": "📚 <b>Comics / Stories</b>\n\nPick the story:", "es": "📚 <b>Comics / Historias</b>\n\nElige la historia:"},
+        }
+        title = titles.get(cat, titles["men"]).get(lang, titles.get(cat, titles["men"])["pt"])
+
+    try:
+        bot.edit_message_text(title, call.message.chat.id, call.message.message_id,
+                              reply_markup=_padrao_styles_markup_for_cat(cat, lang), parse_mode='HTML')
+    except Exception:
+        bot.send_message(call.message.chat.id, title,
+                         reply_markup=_padrao_styles_markup_for_cat(cat, lang), parse_mode='HTML')
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("padgrp_"))
+def callback_padgrp(call):
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    grp_key = call.data.replace("padgrp_", "")
+
+    if user_id not in pending_photos:
+        bot.answer_callback_query(call.id, "Foto expirada!")
+        return
+
+    grp = PADRAO_UNISEX_GROUPS.get(grp_key)
+    if not grp:
+        bot.answer_callback_query(call.id, "Grupo inválido.")
+        return
+
+    mk = telebot.types.InlineKeyboardMarkup(row_width=1)
+    for key, st in PADRAO_STYLES.items():
+        if st.get("cat") == "unisex" and st.get("grp") == grp_key:
+            mk.add(telebot.types.InlineKeyboardButton(st["nome"], callback_data=f"padst_{key}"))
+    back_label = {"pt": "⬅️ Voltar", "en": "⬅️ Back", "es": "⬅️ Volver"}.get(lang, "⬅️ Voltar")
+    mk.add(telebot.types.InlineKeyboardButton(back_label, callback_data="padcat_unisex"))
+
+    title = f"{grp['nome']}\n\n" + {"pt": "Escolhe o estilo:", "en": "Pick a style:", "es": "Elige el estilo:"}.get(lang, "Escolhe o estilo:")
+    try:
+        bot.edit_message_text(title, call.message.chat.id, call.message.message_id,
+                              reply_markup=mk, parse_mode='HTML')
+    except Exception:
+        bot.send_message(call.message.chat.id, title, reply_markup=mk, parse_mode='HTML')
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("padsto_"))
+def callback_padsto(call):
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    story_key = call.data.replace("padsto_", "")
+
+    if user_id not in pending_photos:
+        bot.answer_callback_query(call.id, "Foto expirada!")
+        return
+
+    story = PADRAO_STORIES.get(story_key)
+    if not story:
+        bot.answer_callback_query(call.id, "História inválida.")
+        return
+
+    mk = telebot.types.InlineKeyboardMarkup(row_width=1)
+    for sk in story["scenes"]:
+        st = PADRAO_STYLES.get(sk)
+        if st:
+            mk.add(telebot.types.InlineKeyboardButton(st["nome"], callback_data=f"padst_{sk}"))
+    back_label = {"pt": "⬅️ Voltar", "en": "⬅️ Back", "es": "⬅️ Volver"}.get(lang, "⬅️ Voltar")
+    mk.add(telebot.types.InlineKeyboardButton(back_label, callback_data=f"padcat_{story['cat']}"))
+
+    cost_note = {
+        "pt": f"\n\n💳 Cada cena custa {MODELO_PADRAO['custo']} créditos (gera 1 imagem por clique).",
+        "en": f"\n\n💳 Each scene costs {MODELO_PADRAO['custo']} credits (generates 1 image per click).",
+        "es": f"\n\n💳 Cada escena cuesta {MODELO_PADRAO['custo']} créditos (genera 1 imagen por clic).",
+    }
+    title = f"{story['nome']}\n\n" + {"pt": "Escolhe a cena:", "en": "Pick the scene:", "es": "Elige la escena:"}.get(lang, "Escolhe a cena:") + cost_note.get(lang, cost_note["pt"])
+    try:
+        bot.edit_message_text(title, call.message.chat.id, call.message.message_id,
+                              reply_markup=mk, parse_mode='HTML')
+    except Exception:
+        bot.send_message(call.message.chat.id, title, reply_markup=mk, parse_mode='HTML')
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("padst_"))
+def callback_padst(call):
+    """Aplica um estilo escolhido: combina prompt fixo + descrição user e gera com Modelo Padrão."""
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    style_key = call.data.replace("padst_", "")
+
+    if user_id not in pending_photos:
+        bot.answer_callback_query(call.id, "Foto expirada!")
+        return
+
+    style = PADRAO_STYLES.get(style_key)
+    if not style:
+        bot.answer_callback_query(call.id, "Estilo inválido.")
+        return
+
+    if get_user_credits(user_id) < MODELO_PADRAO["custo"]:
+        bot.answer_callback_query(call.id, "Créditos insuficientes!", show_alert=True)
+        return
+
+    photo_data = pending_photos.pop(user_id)
+    caption = (photo_data.get("caption") or "").strip()
+
+    allowed, reason, extra = check_user_allowed(user_id, prompt=caption, check_rate=False)
+    if not allowed:
+        bot.answer_callback_query(call.id, "Não permitido.", show_alert=True)
+        return
+
+    final_prompt = build_padrao_final_prompt(style_key, caption)
+    if not final_prompt:
+        bot.answer_callback_query(call.id, "Erro a montar o prompt.")
+        return
+
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except Exception:
+        pass
+
+    Thread(target=execute_padrao,
+           args=(call.message.chat.id, user_id, lang, photo_data, final_prompt, style["nome"], style_key)).start()
+
+
 
 
 # ==================== MODELO PRO — SUBMENU (FOTO UNICA) ====================
@@ -6271,16 +7572,58 @@ def callback_pro_single(call):
         return
 
     if action == "realista":
-        # Mostrar submenu com 3 presets
+        # Mostrar submenu com presets de realismo (3 originais + 4 novos)
         texts = {
-            "pt": "📸 <b>Escolhe o tipo de realismo:</b>",
-            "en": "📸 <b>Choose the realism type:</b>",
-            "es": "📸 <b>Elige el tipo de realismo:</b>"
+            "pt": "📷 <b>Escolhe o tipo de realismo:</b>",
+            "en": "📷 <b>Choose the realism type:</b>",
+            "es": "📷 <b>Elige el tipo de realismo:</b>"
         }
         markup = telebot.types.InlineKeyboardMarkup(row_width=1)
         markup.add(telebot.types.InlineKeyboardButton(PRO_PRESETS["original"]["nome"], callback_data="pro_s_p_original"))
         markup.add(telebot.types.InlineKeyboardButton(PRO_PRESETS["expression"]["nome"], callback_data="pro_s_p_expression"))
         markup.add(telebot.types.InlineKeyboardButton(PRO_PRESETS["softer"]["nome"], callback_data="pro_s_p_softer"))
+        markup.add(telebot.types.InlineKeyboardButton(PRO_REALISM_EXTRA["cinematic"]["nome"], callback_data="pro_s_r_cinematic"))
+        markup.add(telebot.types.InlineKeyboardButton(PRO_REALISM_EXTRA["ultra_real"]["nome"], callback_data="pro_s_r_ultra_real"))
+        markup.add(telebot.types.InlineKeyboardButton(PRO_REALISM_EXTRA["iphone"]["nome"], callback_data="pro_s_r_iphone"))
+        markup.add(telebot.types.InlineKeyboardButton(PRO_REALISM_EXTRA["studio"]["nome"], callback_data="pro_s_r_studio"))
+        back_label = "⬅️ Voltar" if lang == "pt" else ("⬅️ Back" if lang == "en" else "⬅️ Volver")
+        markup.add(telebot.types.InlineKeyboardButton(back_label, callback_data="pro_s_back"))
+        try:
+            bot.edit_message_text(texts.get(lang, texts["pt"]), call.message.chat.id, call.message.message_id,
+                                  reply_markup=markup, parse_mode='HTML')
+        except:
+            bot.send_message(call.message.chat.id, texts.get(lang, texts["pt"]), reply_markup=markup, parse_mode='HTML')
+        return
+
+    if action == "styles":
+        # Submenu Estilo & Humor
+        texts = {
+            "pt": "🎭 <b>Estilo & Humor</b>\n\nEscolhe a vibe:",
+            "en": "🎭 <b>Style & Mood</b>\n\nPick the vibe:",
+            "es": "🎭 <b>Estilo y Humor</b>\n\nElige la vibe:"
+        }
+        markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+        for k, item in PRO_STYLE_MOOD.items():
+            markup.add(telebot.types.InlineKeyboardButton(item["nome"], callback_data=f"pro_s_st_{k}"))
+        back_label = "⬅️ Voltar" if lang == "pt" else ("⬅️ Back" if lang == "en" else "⬅️ Volver")
+        markup.add(telebot.types.InlineKeyboardButton(back_label, callback_data="pro_s_back"))
+        try:
+            bot.edit_message_text(texts.get(lang, texts["pt"]), call.message.chat.id, call.message.message_id,
+                                  reply_markup=markup, parse_mode='HTML')
+        except:
+            bot.send_message(call.message.chat.id, texts.get(lang, texts["pt"]), reply_markup=markup, parse_mode='HTML')
+        return
+
+    if action == "enh":
+        # Submenu Enhancements Avançados
+        texts = {
+            "pt": "✨ <b>Enhancements Avançados</b>\n\nEscolhe o tipo de melhoria:",
+            "en": "✨ <b>Advanced Enhancements</b>\n\nPick the enhancement:",
+            "es": "✨ <b>Enhancements Avanzados</b>\n\nElige la mejora:"
+        }
+        markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+        for k, item in PRO_ENHANCEMENTS.items():
+            markup.add(telebot.types.InlineKeyboardButton(item["nome"], callback_data=f"pro_s_en_{k}"))
         back_label = "⬅️ Voltar" if lang == "pt" else ("⬅️ Back" if lang == "en" else "⬅️ Volver")
         markup.add(telebot.types.InlineKeyboardButton(back_label, callback_data="pro_s_back"))
         try:
@@ -6298,20 +7641,57 @@ def callback_pro_single(call):
             "es": f"✨ <b>Modelo Pro</b> ({MODELO_PRO['custo']} créd)\n\nElige cómo editar:"
         }
         btn_texts = {
-            "pt": ("✏️ Personalizar", "📸 Deixa mais realista", "❌ Cancelar"),
-            "en": ("✏️ Custom prompt", "📸 Make it more realistic", "❌ Cancel"),
-            "es": ("✏️ Personalizar", "📸 Hazlo más realista", "❌ Cancelar")
+            "pt": ("✏️ Personalizar", "📷 Deixa mais realista", "🎭 Estilo & Humor", "✨ Enhancements Avançados", "❌ Cancelar"),
+            "en": ("✏️ Custom prompt", "📷 Make it more realistic", "🎭 Style & Mood", "✨ Advanced Enhancements", "❌ Cancel"),
+            "es": ("✏️ Personalizar", "📷 Hazlo más realista", "🎭 Estilo y Humor", "✨ Enhancements Avanzados", "❌ Cancelar")
         }
-        b1, b2, b3 = btn_texts.get(lang, btn_texts["pt"])
+        b1, b2, b3, b4, b5 = btn_texts.get(lang, btn_texts["pt"])
         markup = telebot.types.InlineKeyboardMarkup(row_width=1)
         markup.add(telebot.types.InlineKeyboardButton(b1, callback_data="pro_s_custom"))
         markup.add(telebot.types.InlineKeyboardButton(b2, callback_data="pro_s_realista"))
-        markup.add(telebot.types.InlineKeyboardButton(b3, callback_data="pro_s_cancel"))
+        markup.add(telebot.types.InlineKeyboardButton(b3, callback_data="pro_s_styles"))
+        markup.add(telebot.types.InlineKeyboardButton(b4, callback_data="pro_s_enh"))
+        markup.add(telebot.types.InlineKeyboardButton(b5, callback_data="pro_s_cancel"))
         try:
             bot.edit_message_text(menu_texts.get(lang, menu_texts["pt"]), call.message.chat.id, call.message.message_id,
                                   reply_markup=markup, parse_mode='HTML')
         except:
             pass
+        return
+
+    if action.startswith("r_") or action.startswith("st_") or action.startswith("en_"):
+        # Preset extra: realismo / estilo & humor / enhancements
+        if action.startswith("r_"):
+            preset_key = action[2:]
+            preset = PRO_REALISM_EXTRA.get(preset_key)
+        elif action.startswith("st_"):
+            preset_key = action[3:]
+            preset = PRO_STYLE_MOOD.get(preset_key)
+        else:  # en_
+            preset_key = action[3:]
+            preset = PRO_ENHANCEMENTS.get(preset_key)
+
+        if not preset:
+            bot.answer_callback_query(call.id, "Preset invalido.")
+            return
+
+        photo_data = pending_photos.pop(user_id)
+        user_states.pop(user_id, None)
+
+        # Combina prompt fixo com a descrição do usuário (se houver)
+        caption = (photo_data.get("caption") or "").strip()
+        if caption:
+            final_prompt = f"{preset['prompt']} Additional user request: {caption}"
+        else:
+            final_prompt = preset["prompt"]
+
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
+
+        Thread(target=execute_pro_single,
+               args=(call.message.chat.id, user_id, lang, photo_data, final_prompt, preset["nome"])).start()
         return
 
     if action.startswith("p_"):
@@ -6407,14 +7787,54 @@ def callback_pro_multi(call):
 
     if action == "realista":
         texts = {
-            "pt": "📸 <b>Escolhe o tipo de realismo:</b>",
-            "en": "📸 <b>Choose the realism type:</b>",
-            "es": "📸 <b>Elige el tipo de realismo:</b>"
+            "pt": "📷 <b>Escolhe o tipo de realismo:</b>",
+            "en": "📷 <b>Choose the realism type:</b>",
+            "es": "📷 <b>Elige el tipo de realismo:</b>"
         }
         markup = telebot.types.InlineKeyboardMarkup(row_width=1)
         markup.add(telebot.types.InlineKeyboardButton(PRO_PRESETS["original"]["nome"], callback_data="pro_m_p_original"))
         markup.add(telebot.types.InlineKeyboardButton(PRO_PRESETS["expression"]["nome"], callback_data="pro_m_p_expression"))
         markup.add(telebot.types.InlineKeyboardButton(PRO_PRESETS["softer"]["nome"], callback_data="pro_m_p_softer"))
+        markup.add(telebot.types.InlineKeyboardButton(PRO_REALISM_EXTRA["cinematic"]["nome"], callback_data="pro_m_r_cinematic"))
+        markup.add(telebot.types.InlineKeyboardButton(PRO_REALISM_EXTRA["ultra_real"]["nome"], callback_data="pro_m_r_ultra_real"))
+        markup.add(telebot.types.InlineKeyboardButton(PRO_REALISM_EXTRA["iphone"]["nome"], callback_data="pro_m_r_iphone"))
+        markup.add(telebot.types.InlineKeyboardButton(PRO_REALISM_EXTRA["studio"]["nome"], callback_data="pro_m_r_studio"))
+        back_label = "⬅️ Voltar" if lang == "pt" else ("⬅️ Back" if lang == "en" else "⬅️ Volver")
+        markup.add(telebot.types.InlineKeyboardButton(back_label, callback_data="pro_m_back"))
+        try:
+            bot.edit_message_text(texts.get(lang, texts["pt"]), call.message.chat.id, call.message.message_id,
+                                  reply_markup=markup, parse_mode='HTML')
+        except:
+            bot.send_message(call.message.chat.id, texts.get(lang, texts["pt"]), reply_markup=markup, parse_mode='HTML')
+        return
+
+    if action == "styles":
+        texts = {
+            "pt": "🎭 <b>Estilo & Humor</b>\n\nEscolhe a vibe:",
+            "en": "🎭 <b>Style & Mood</b>\n\nPick the vibe:",
+            "es": "🎭 <b>Estilo y Humor</b>\n\nElige la vibe:"
+        }
+        markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+        for k, item in PRO_STYLE_MOOD.items():
+            markup.add(telebot.types.InlineKeyboardButton(item["nome"], callback_data=f"pro_m_st_{k}"))
+        back_label = "⬅️ Voltar" if lang == "pt" else ("⬅️ Back" if lang == "en" else "⬅️ Volver")
+        markup.add(telebot.types.InlineKeyboardButton(back_label, callback_data="pro_m_back"))
+        try:
+            bot.edit_message_text(texts.get(lang, texts["pt"]), call.message.chat.id, call.message.message_id,
+                                  reply_markup=markup, parse_mode='HTML')
+        except:
+            bot.send_message(call.message.chat.id, texts.get(lang, texts["pt"]), reply_markup=markup, parse_mode='HTML')
+        return
+
+    if action == "enh":
+        texts = {
+            "pt": "✨ <b>Enhancements Avançados</b>\n\nEscolhe o tipo de melhoria:",
+            "en": "✨ <b>Advanced Enhancements</b>\n\nPick the enhancement:",
+            "es": "✨ <b>Enhancements Avanzados</b>\n\nElige la mejora:"
+        }
+        markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+        for k, item in PRO_ENHANCEMENTS.items():
+            markup.add(telebot.types.InlineKeyboardButton(item["nome"], callback_data=f"pro_m_en_{k}"))
         back_label = "⬅️ Voltar" if lang == "pt" else ("⬅️ Back" if lang == "en" else "⬅️ Volver")
         markup.add(telebot.types.InlineKeyboardButton(back_label, callback_data="pro_m_back"))
         try:
@@ -6431,20 +7851,56 @@ def callback_pro_multi(call):
             "es": f"✨ <b>Modelo Pro — Combinar fotos</b> ({MODELO_PRO['custo']} créd)\n\nElige cómo combinar:"
         }
         btn_texts = {
-            "pt": ("✏️ Personalizar", "📸 Deixa mais realista", "❌ Cancelar"),
-            "en": ("✏️ Custom prompt", "📸 Make it more realistic", "❌ Cancel"),
-            "es": ("✏️ Personalizar", "📸 Hazlo más realista", "❌ Cancelar")
+            "pt": ("✏️ Personalizar", "📷 Deixa mais realista", "🎭 Estilo & Humor", "✨ Enhancements Avançados", "❌ Cancelar"),
+            "en": ("✏️ Custom prompt", "📷 Make it more realistic", "🎭 Style & Mood", "✨ Advanced Enhancements", "❌ Cancel"),
+            "es": ("✏️ Personalizar", "📷 Hazlo más realista", "🎭 Estilo y Humor", "✨ Enhancements Avanzados", "❌ Cancelar")
         }
-        b1, b2, b3 = btn_texts.get(lang, btn_texts["pt"])
+        b1, b2, b3, b4, b5 = btn_texts.get(lang, btn_texts["pt"])
         markup = telebot.types.InlineKeyboardMarkup(row_width=1)
         markup.add(telebot.types.InlineKeyboardButton(b1, callback_data="pro_m_custom"))
         markup.add(telebot.types.InlineKeyboardButton(b2, callback_data="pro_m_realista"))
-        markup.add(telebot.types.InlineKeyboardButton(b3, callback_data="pro_m_cancel"))
+        markup.add(telebot.types.InlineKeyboardButton(b3, callback_data="pro_m_styles"))
+        markup.add(telebot.types.InlineKeyboardButton(b4, callback_data="pro_m_enh"))
+        markup.add(telebot.types.InlineKeyboardButton(b5, callback_data="pro_m_cancel"))
         try:
             bot.edit_message_text(menu_texts.get(lang, menu_texts["pt"]), call.message.chat.id, call.message.message_id,
                                   reply_markup=markup, parse_mode='HTML')
         except:
             pass
+        return
+
+    if action.startswith("r_") or action.startswith("st_") or action.startswith("en_"):
+        # Preset extra: realismo / estilo & humor / enhancements (combinar fotos)
+        if action.startswith("r_"):
+            preset_key = action[2:]
+            preset = PRO_REALISM_EXTRA.get(preset_key)
+        elif action.startswith("st_"):
+            preset_key = action[3:]
+            preset = PRO_STYLE_MOOD.get(preset_key)
+        else:  # en_
+            preset_key = action[3:]
+            preset = PRO_ENHANCEMENTS.get(preset_key)
+
+        if not preset:
+            bot.answer_callback_query(call.id, "Preset invalido.")
+            return
+
+        caption = photo_collections[user_id].get("caption", "")
+        user_states.pop(user_id, None)
+
+        # Combina prompt fixo com a descrição do usuário (se houver)
+        if caption:
+            final_prompt = f"{preset['prompt']} Additional user request: {caption}"
+        else:
+            final_prompt = preset["prompt"]
+
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
+
+        Thread(target=execute_combine_pro,
+               args=(user_id, lang, caption, final_prompt)).start()
         return
 
     if action.startswith("p_"):
