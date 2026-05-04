@@ -22,8 +22,6 @@ from pathlib import Path
 _THIS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_THIS_DIR))
 
-from dotenv import load_dotenv
-load_dotenv(_THIS_DIR.parent / "backend" / ".env")
 
 import telebot
 from telebot import types
