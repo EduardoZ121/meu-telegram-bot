@@ -28,8 +28,6 @@ from telebot import types
 import replicate
 import requests
 
-from shared import db as sdb
-from shared import styles as sst
 
 # ===================== CONFIG =====================
 TOKEN = os.environ.get("TELEGRAM_TOKEN_BOT2")
