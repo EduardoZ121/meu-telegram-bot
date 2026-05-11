@@ -474,12 +474,12 @@ load_secondary_admins()
 
 # ==================== SISTEMA GOD-MODE ADMIN (CONFIG GLOBAL) ====================
 DEFAULT_SYSTEM_CONFIG = {
-    "nsfw_enabled": True,           # SEMPRE permitido — Replicate decide
+    "nsfw_enabled": False,          # Decisao temporaria de produto: NSFW desligado.
     "maintenance_mode": False,
     "generation_disabled": False,
     "safe_mode": False,
     "rate_limit_per_min": 10,
-    "nsfw_keywords": []             # VAZIO — sem filtro de palavras-chave
+    "nsfw_keywords": []             # Decisao temporaria de produto: sem keywords NSFW.
 }
 
 def get_system_config():
@@ -492,6 +492,9 @@ def get_system_config():
     # Mergeia defaults para novas keys
     merged = dict(DEFAULT_SYSTEM_CONFIG)
     merged.update(cfg)
+    # NSFW permanece desligado mesmo que exista config antiga em disco.
+    merged["nsfw_enabled"] = False
+    merged["nsfw_keywords"] = []
     return merged
 
 def set_system_config(key, value):
@@ -1136,6 +1139,12 @@ I18N = {
         "en": "👋 Send /start to begin!",
         "es": "👋 Envía /start para empezar!",
         "fr": "👋 Envoie /start pour commencer!",
+    },
+    "private_disabled": {
+        "pt": "🔒 <b>Edição Privada temporariamente desativada.</b>\n\nUsa os modos principais em /modo.",
+        "en": "🔒 <b>Private Editing is temporarily disabled.</b>\n\nUse the main modes in /modo.",
+        "es": "🔒 <b>Edición Privada temporalmente desactivada.</b>\n\nUsa los modos principales en /modo.",
+        "fr": "🔒 <b>Édition Privée temporairement désactivée.</b>\n\nUtilise les modes principaux dans /modo.",
     },
     "must_pick_mode": {
         "pt": "👇 Antes de continuares, escolhe o teu modo:",
@@ -3870,6 +3879,102 @@ def processar_criacao(chat_id, user_id, prompt, lang, auto_improve=True):
         diagnose_and_notify(e, "criacao")
         bot.edit_message_text("❌ Erro. Crédito reembolsado.", chat_id, proc.message_id)
 
+# ==================== HELP ====================
+def get_help_text(lang):
+    """Ajuda principal organizada e alinhada com features ativas."""
+    texts = {
+        "pt": (
+            "❓ <b>Ajuda - Remake Pixel</b>\n\n"
+            "<b>Comandos úteis</b>\n"
+            "• /start - abrir o menu principal\n"
+            "• /menu - voltar ao menu\n"
+            "• /modo - escolher modo de utilização\n"
+            "• /estilos - ver estilos disponíveis\n"
+            "• /creditos - consultar saldo\n"
+            "• /idioma - mudar idioma\n"
+            "• /wizard - assistente guiado\n"
+            "• /termos - termos de uso\n\n"
+            "<b>Modos principais</b>\n"
+            f"• 🎨 <b>Padrão</b> ({MODELO_PADRAO['custo']} créditos): edição por descrição ou estilos prontos.\n"
+            f"• ✨ <b>Pro</b> ({MODELO_PRO['custo']} créditos): edição fotorrealista e presets avançados.\n"
+            f"• 🎭 <b>Artístico</b> ({MODELO_ARTISTICO['custo']} créditos): estilos artísticos.\n"
+            "• 📱 <b>Carrossel/Posters</b>: conteúdos sequenciais e templates quando disponíveis.\n"
+            "• 💬 <b>Chat IA</b>: ajuda criativa e prompts.\n\n"
+            "<b>Notas importantes</b>\n"
+            "• A Edição Privada está temporariamente desativada; usa /modo.\n"
+            "• Conteúdo NSFW está temporariamente desativado.\n"
+            "• Os créditos são debitados apenas nos fluxos pagos definidos no bot."
+        ),
+        "en": (
+            "❓ <b>Help - Remake Pixel</b>\n\n"
+            "<b>Useful commands</b>\n"
+            "• /start - open the main menu\n"
+            "• /menu - return to the menu\n"
+            "• /modo - choose usage mode\n"
+            "• /estilos - view available styles\n"
+            "• /creditos - check balance\n"
+            "• /idioma - change language\n"
+            "• /wizard - guided assistant\n"
+            "• /termos - terms of use\n\n"
+            "<b>Main modes</b>\n"
+            f"• 🎨 <b>Standard</b> ({MODELO_PADRAO['custo']} credits): edit by description or ready styles.\n"
+            f"• ✨ <b>Pro</b> ({MODELO_PRO['custo']} credits): photorealistic editing and advanced presets.\n"
+            f"• 🎭 <b>Artistic</b> ({MODELO_ARTISTICO['custo']} credits): artistic styles.\n"
+            "• 📱 <b>Carousel/Posters</b>: sequential content and templates when available.\n"
+            "• 💬 <b>AI Chat</b>: creative help and prompts.\n\n"
+            "<b>Important notes</b>\n"
+            "• Private Editing is temporarily disabled; use /modo.\n"
+            "• NSFW content is temporarily disabled.\n"
+            "• Credits are charged only in the paid flows already defined in the bot."
+        ),
+        "es": (
+            "❓ <b>Ayuda - Remake Pixel</b>\n\n"
+            "<b>Comandos útiles</b>\n"
+            "• /start - abrir el menú principal\n"
+            "• /menu - volver al menú\n"
+            "• /modo - elegir modo de uso\n"
+            "• /estilos - ver estilos disponibles\n"
+            "• /creditos - consultar saldo\n"
+            "• /idioma - cambiar idioma\n"
+            "• /wizard - asistente guiado\n"
+            "• /termos - términos de uso\n\n"
+            "<b>Modos principales</b>\n"
+            f"• 🎨 <b>Estándar</b> ({MODELO_PADRAO['custo']} créditos): edición por descripción o estilos listos.\n"
+            f"• ✨ <b>Pro</b> ({MODELO_PRO['custo']} créditos): edición fotorrealista y presets avanzados.\n"
+            f"• 🎭 <b>Artístico</b> ({MODELO_ARTISTICO['custo']} créditos): estilos artísticos.\n"
+            "• 📱 <b>Carrusel/Posters</b>: contenido secuencial y plantillas cuando estén disponibles.\n"
+            "• 💬 <b>Chat IA</b>: ayuda creativa y prompts.\n\n"
+            "<b>Notas importantes</b>\n"
+            "• La Edición Privada está temporalmente desactivada; usa /modo.\n"
+            "• El contenido NSFW está temporalmente desactivado.\n"
+            "• Los créditos se cobran solo en los flujos de pago ya definidos en el bot."
+        ),
+        "fr": (
+            "❓ <b>Aide - Remake Pixel</b>\n\n"
+            "<b>Commandes utiles</b>\n"
+            "• /start - ouvrir le menu principal\n"
+            "• /menu - revenir au menu\n"
+            "• /modo - choisir le mode d'utilisation\n"
+            "• /estilos - voir les styles disponibles\n"
+            "• /creditos - consulter le solde\n"
+            "• /idioma - changer la langue\n"
+            "• /wizard - assistant guidé\n"
+            "• /termos - conditions d'utilisation\n\n"
+            "<b>Modes principaux</b>\n"
+            f"• 🎨 <b>Standard</b> ({MODELO_PADRAO['custo']} crédits): édition par description ou styles prêts.\n"
+            f"• ✨ <b>Pro</b> ({MODELO_PRO['custo']} crédits): édition photoréaliste et presets avancés.\n"
+            f"• 🎭 <b>Artistique</b> ({MODELO_ARTISTICO['custo']} crédits): styles artistiques.\n"
+            "• 📱 <b>Carrousel/Posters</b>: contenus séquentiels et modèles quand disponibles.\n"
+            "• 💬 <b>Chat IA</b>: aide créative et prompts.\n\n"
+            "<b>Notes importantes</b>\n"
+            "• L'Édition Privée est temporairement désactivée; utilise /modo.\n"
+            "• Le contenu NSFW est temporairement désactivé.\n"
+            "• Les crédits ne sont débités que dans les flux payants déjà définis dans le bot."
+        ),
+    }
+    return texts.get(lang, texts["pt"])
+
+
 # ==================== CALLBACKS ====================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('lang_'))
 def callback_language(call):
@@ -4143,54 +4248,12 @@ def callback_actions(call):
         return
 
     elif action == "help":
-        texts = {
-            "pt": (f"❓ <b>Ajuda - Remake Pixel</b>\n\n"
-                   f"<b>🎨 GERAR IMAGENS</b>\n"
-                   f"No menu, clica em 'Gerar Fotos' e descreve o que queres criar.\n\n"
-                   f"<b>📸 EDITAR FOTOS</b>\n"
-                   f"Envia 1 a 5 fotos no chat.\n"
-                   f"🎨 <b>Padrão</b> ({MODELO_PADRAO['custo']} cred) — Com legenda: edita direto pela tua descrição. <b>Sem legenda: 65+ estilos prontos</b> (Homens, Mulheres, Unissex, Flyers, Casais, Comics)\n"
-                   f"✨ <b>Pro</b> ({MODELO_PRO['custo']} cred) — Melhoria fotorrealista. Submenus: Personalizar, 📷 Realista (7), 🎭 Estilo & Humor (7), ✨ Enhancements Avançados (6)\n"
-                   f"🎭 <b>Artístico</b> ({MODELO_ARTISTICO['custo']} cred) — 33 estilos artísticos\n"
-                   f"💑 <b>Casais</b> — Envia 2 fotos juntas (ou 1 dos dois) e usa o estilo 'Casais' do Padrão\n"
-                   f"📚 <b>Comics</b> — Páginas de banda desenhada estilo Walking Dead (cenas com diálogo)\n\n"
-                   f"<b>📱 CARROSSEL</b>\n"
-                   f"Gera 2-4 imagens em sequência para Instagram.\n\n"
-                   f"<b>⚙️ CONFIGURAÇÕES</b>\n"
-                   f"Estilos visuais (33 opções), formato (Instagram, TikTok, etc.), variações e personalidade da IA.\n\n"
-                   f"<b>💬 CHAT IA</b>\n"
-                   f"Escreve qualquer mensagem para conversar com a IA. Grátis!\n\n"
-                   f"<b>🖼️ GALERIA @RemakePixel_Gallery</b>\n"
-                   f"Cada imagem partilhada tem agora <b>📋 Ver Prompt</b> — clica para receberes o prompt completo em DM e reutilizares.\n\n"
-                   f"<b>📋 COMANDOS</b>\n"
-                   f"/menu — Menu principal\n"
-                   f"/start — Reiniciar bot\n"
-                   f"/wizard — Assistente de criação\n"
-                   f"/estilos — Catálogo dos 65+ estilos do Padrão (com previews reais)\n"
-                   f"/creditos — Ver saldo\n"
-                   f"/idioma — Mudar idioma\n"
-                   f"/termos — Termos de uso\n\n"
-                   f"Dúvidas? Clica abaixo para falar com o suporte!"),
-            "en": (f"❓ <b>Help - Remake Pixel</b>\n\n"
-                   f"<b>🎨 GENERATE</b> — Click 'Generate' and describe what you want.\n"
-                   f"<b>📸 EDIT PHOTOS</b> — Send 1-5 photos.\n"
-                   f"🎨 <b>Standard</b> ({MODELO_PADRAO['custo']} cred) — With caption: direct edit. Without caption: <b>65+ ready styles</b> (Men, Women, Unisex, Flyers, Couples, Comics)\n"
-                   f"✨ <b>Pro</b> ({MODELO_PRO['custo']} cred) — Photorealistic. Submenus: Custom, 📷 Realistic (7), 🎭 Style & Mood (7), ✨ Advanced Enhancements (6)\n"
-                   f"🎭 <b>Artistic</b> ({MODELO_ARTISTICO['custo']} cred) — 33 art styles\n"
-                   f"💑 <b>Couples</b> — Send 2 photos and pick a 'Couples' style under Standard\n"
-                   f"📚 <b>Comics</b> — Walking-Dead-style comic pages with dialogue\n\n"
-                   f"<b>📱 CAROUSEL</b> — Generate 2-4 sequential images.\n"
-                   f"<b>⚙️ SETTINGS</b> — 33 styles, formats, variations.\n"
-                   f"<b>💬 AI CHAT</b> — Free, just type!\n"
-                   f"<b>🖼️ GALLERY</b> — Each shared image now has <b>📋 View Prompt</b> button.\n\n"
-                   f"Questions? Click below for support!"),
-        }
         markup = telebot.types.InlineKeyboardMarkup(row_width=1)
         markup.add(
             telebot.types.InlineKeyboardButton("💬 Perguntar ao Suporte (Chat IA)", callback_data="action_support_chat"),
             telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="action_menu")
         )
-        bot.edit_message_text(texts.get(lang, texts["pt"]), call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='HTML')
+        bot.edit_message_text(get_help_text(lang), call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='HTML')
     
     elif action == "support_chat":
         try:
@@ -4918,17 +4981,15 @@ def admin_section_users_kb():
     return m
 
 def admin_section_security_kb():
-    cfg = get_system_config()
     m = telebot.types.InlineKeyboardMarkup(row_width=1)
-    nsfw_txt = "🔞 NSFW: ✅ ON (permitido)" if cfg.get("nsfw_enabled") else "🔞 NSFW: ❌ OFF (bloqueado)"
+    cfg = get_system_config()
     safe_txt = "🛡️ Safe Mode: ✅ ON" if cfg.get("safe_mode") else "🛡️ Safe Mode: ❌ OFF"
     gen_txt = "⛔ Geração: DESLIGADA" if cfg.get("generation_disabled") else "✅ Geração: LIGADA"
     maint_txt = "🛠️ Manutenção: ON" if cfg.get("maintenance_mode") else "🛠️ Manutenção: OFF"
-    m.add(telebot.types.InlineKeyboardButton(nsfw_txt, callback_data="admin_toggle_nsfw"))
+    m.add(telebot.types.InlineKeyboardButton("🔞 NSFW temporariamente desativado", callback_data="admin_nsfw_disabled"))
     m.add(telebot.types.InlineKeyboardButton(safe_txt, callback_data="admin_toggle_safe"))
     m.add(telebot.types.InlineKeyboardButton(gen_txt, callback_data="admin_toggle_gen"))
     m.add(telebot.types.InlineKeyboardButton(maint_txt, callback_data="admin_toggle_maint"))
-    m.add(telebot.types.InlineKeyboardButton("🔑 Editar NSFW keywords", callback_data="admin_nsfw_kw"))
     m.add(telebot.types.InlineKeyboardButton(f"⚡ Rate-limit: {cfg.get('rate_limit_per_min',10)}/min", callback_data="admin_ratelimit"))
     m.add(telebot.types.InlineKeyboardButton("🚨 EMERGÊNCIA - Desligar tudo", callback_data="admin_emergency_confirm"))
     m.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_panel"))
@@ -4998,16 +5059,12 @@ def user_profile_kb(target_id):
     m = telebot.types.InlineKeyboardMarkup(row_width=2)
     ban_txt = "✅ Desbanir" if flags.get("banned") else "🚫 Banir"
     shadow_txt = "✅ Tirar Shadowban" if flags.get("shadowbanned") else "👻 Shadowban"
-    nsfw_txt = "🔞 NSFW: ON" if flags.get("nsfw_allowed") else "🔞 NSFW: OFF"
     vip_txt = "💎 Remover VIP" if has_tag(target_id, "VIP") else "💎 Tornar VIP"
     m.add(
         telebot.types.InlineKeyboardButton(ban_txt, callback_data=f"admin_u_ban_{target_id}"),
         telebot.types.InlineKeyboardButton(shadow_txt, callback_data=f"admin_u_shadow_{target_id}")
     )
-    m.add(
-        telebot.types.InlineKeyboardButton(vip_txt, callback_data=f"admin_u_vip_{target_id}"),
-        telebot.types.InlineKeyboardButton(nsfw_txt, callback_data=f"admin_u_nsfw_{target_id}")
-    )
+    m.add(telebot.types.InlineKeyboardButton(vip_txt, callback_data=f"admin_u_vip_{target_id}"))
     m.add(
         telebot.types.InlineKeyboardButton("💳 +Créditos", callback_data=f"admin_select_user_{target_id}"),
         telebot.types.InlineKeyboardButton("➖ -Créditos", callback_data=f"admin_u_rm_{target_id}")
@@ -5039,7 +5096,6 @@ def render_user_profile(target_id):
     status_icons = []
     if flags.get("banned"): status_icons.append("🚫BANIDO")
     if flags.get("shadowbanned"): status_icons.append("👻SHADOW")
-    if flags.get("nsfw_allowed"): status_icons.append("🔞NSFW-OK")
     if has_tag(target_id, "VIP"): status_icons.append("💎VIP")
     status_str = " | ".join(status_icons) if status_icons else "✅ OK"
 
@@ -5067,7 +5123,8 @@ def callback_admin_panel(call):
         return
     
     action = call.data.replace('admin_', '')
-    bot.answer_callback_query(call.id)
+    if action != "nsfw_disabled" and not action.startswith("u_nsfw_"):
+        bot.answer_callback_query(call.id)
     
     if action == "panel" or action == "close":
         if action == "close":
@@ -5538,12 +5595,11 @@ def callback_admin_panel(call):
     elif action == "sec_security":
         cfg = get_system_config()
         msg = "🛡️ <b>SEGURANÇA</b>\n\n"
-        msg += f"🔞 NSFW: <b>{'LIGADO' if cfg.get('nsfw_enabled') else 'BLOQUEADO'}</b>\n"
+        msg += "🔞 NSFW: <b>temporariamente desativado</b>\n"
         msg += f"🛡️ Safe Mode: <b>{'ON' if cfg.get('safe_mode') else 'OFF'}</b>\n"
         msg += f"⛔ Geração: <b>{'DESLIGADA' if cfg.get('generation_disabled') else 'LIGADA'}</b>\n"
         msg += f"🛠️ Manutenção: <b>{'ON' if cfg.get('maintenance_mode') else 'OFF'}</b>\n"
         msg += f"⚡ Rate limit: <b>{cfg.get('rate_limit_per_min',10)}/min</b>\n"
-        msg += f"🔑 NSFW keywords: <b>{len(cfg.get('nsfw_keywords',[]))}</b>\n\n"
         msg += "<i>Admin IGNORA todas as restrições.</i>"
         bot.edit_message_text(msg, call.message.chat.id, call.message.message_id,
                               reply_markup=admin_section_security_kb(), parse_mode='HTML')
@@ -5664,10 +5720,13 @@ def callback_admin_panel(call):
                               reply_markup=admin_section_reports_kb(), parse_mode='HTML')
 
     # ==================== TOGGLES DE SEGURANCA ====================
-    elif action in ("toggle_nsfw", "toggle_safe", "toggle_gen", "toggle_maint"):
+    elif action == "nsfw_disabled":
+        bot.answer_callback_query(call.id, "NSFW temporariamente desativado", show_alert=True)
+        return
+
+    elif action in ("toggle_safe", "toggle_gen", "toggle_maint"):
         cfg = get_system_config()
         key_map = {
-            "toggle_nsfw": ("nsfw_enabled", "NSFW"),
             "toggle_safe": ("safe_mode", "Safe Mode"),
             "toggle_gen": ("generation_disabled", "Geração"),
             "toggle_maint": ("maintenance_mode", "Manutenção"),
@@ -5685,12 +5744,11 @@ def callback_admin_panel(call):
         # Re-renderiza seccao
         cfg = get_system_config()
         msg = "🛡️ <b>SEGURANÇA</b>\n\n"
-        msg += f"🔞 NSFW: <b>{'LIGADO' if cfg.get('nsfw_enabled') else 'BLOQUEADO'}</b>\n"
+        msg += "🔞 NSFW: <b>temporariamente desativado</b>\n"
         msg += f"🛡️ Safe Mode: <b>{'ON' if cfg.get('safe_mode') else 'OFF'}</b>\n"
         msg += f"⛔ Geração: <b>{'DESLIGADA' if cfg.get('generation_disabled') else 'LIGADA'}</b>\n"
         msg += f"🛠️ Manutenção: <b>{'ON' if cfg.get('maintenance_mode') else 'OFF'}</b>\n"
         msg += f"⚡ Rate limit: <b>{cfg.get('rate_limit_per_min',10)}/min</b>\n"
-        msg += f"🔑 NSFW keywords: <b>{len(cfg.get('nsfw_keywords',[]))}</b>\n\n"
         msg += "<i>Admin IGNORA todas as restrições.</i>"
         bot.edit_message_text(msg, call.message.chat.id, call.message.message_id,
                               reply_markup=admin_section_security_kb(), parse_mode='HTML')
@@ -5714,15 +5772,11 @@ def callback_admin_panel(call):
                               reply_markup=admin_section_security_kb(), parse_mode='HTML')
 
     elif action == "nsfw_kw":
-        cfg = get_system_config()
-        kws = cfg.get("nsfw_keywords", [])
-        msg = f"🔑 <b>NSFW keywords ({len(kws)})</b>\n\n"
-        msg += ", ".join(kws[:60])
-        msg += "\n\n<i>Envia a nova lista (palavras separadas por vírgula) para substituir. Ou /cancel.</i>"
-        admin_states[user_id] = "awaiting_nsfw_kw"
         mk = telebot.types.InlineKeyboardMarkup()
         mk.add(telebot.types.InlineKeyboardButton("◀️ Voltar", callback_data="admin_sec_security"))
-        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=mk, parse_mode='HTML')
+        bot.edit_message_text("🔞 <b>NSFW temporariamente desativado</b>",
+                              call.message.chat.id, call.message.message_id,
+                              reply_markup=mk, parse_mode='HTML')
 
     elif action == "ratelimit":
         admin_states[user_id] = "awaiting_ratelimit"
@@ -5824,14 +5878,8 @@ def callback_admin_panel(call):
                               reply_markup=user_profile_kb(target), parse_mode='HTML')
 
     elif action.startswith("u_nsfw_"):
-        target = int(action.replace("u_nsfw_", ""))
-        flags = get_user_flags(target)
-        new_val = not flags.get("nsfw_allowed", False)
-        set_user_flag(target, "nsfw_allowed", new_val)
-        log_system_event("info", "user_action", f"User {target} nsfw_allowed={new_val}", target)
-        bot.answer_callback_query(call.id, f"NSFW {'ON' if new_val else 'OFF'}")
-        bot.edit_message_text(render_user_profile(target), call.message.chat.id, call.message.message_id,
-                              reply_markup=user_profile_kb(target), parse_mode='HTML')
+        bot.answer_callback_query(call.id, "NSFW temporariamente desativado", show_alert=True)
+        return
 
     elif action.startswith("u_rm_"):
         target = int(action.replace("u_rm_", ""))
@@ -6072,13 +6120,6 @@ def cmd_modo(message):
     show_mode_picker(message.chat.id, user_id, lang)
 
 
-# ==================== EDIÇÃO PRIVADA (NSFW LITE — só com foto + prompt livre) ====================
-# Usa Replicate FLUX (Modelo Pro) com safety_rewrite que PERMITE biquini/lingerie
-# mas bloqueia nudez total. Sempre notifica o admin.
-private_edit_states = {}  # user_id -> {"photo_bytes": ..., "stage": "awaiting_photo"|"awaiting_prompt"}
-
-PRIVATE_EDIT_COST = 18  # mesmo custo do Modelo Pro
-
 @bot.message_handler(commands=['private', 'privado', 'edit_private'])
 def cmd_private(message):
     user_id = message.from_user.id
@@ -6086,78 +6127,8 @@ def cmd_private(message):
         bot.reply_to(message, T(get_user_lang(user_id), "send_start_first"))
         return
     lang = get_user_lang(user_id)
-    private_edit_states[user_id] = {"stage": "awaiting_photo"}
-    user_states[user_id] = "private_awaiting_photo"
-    txt = {
-        "pt": ("🔥 <b>Edição Privada</b> (Flux Kontext Pro)\n\n"
-               f"💳 {PRIVATE_EDIT_COST} créditos por imagem\n\n"
-               "1️⃣ Envia uma foto\n"
-               "2️⃣ Descreve a edição que queres (ex: <i>nua na praia</i>, <i>lingerie em quarto</i>, <i>biquíni</i>)\n\n"
-               "✅ <b>Modelo NSFW</b> — sem filtros automáticos\n"
-               "• Preserva o teu rosto e identidade\n"
-               "• Toda tentativa fica registada (admin é notificado)"),
-        "en": ("🔥 <b>Private Edit</b> (Flux Kontext Pro)\n\n"
-               f"💳 {PRIVATE_EDIT_COST} credits per image\n\n"
-               "1️⃣ Send a photo\n"
-               "2️⃣ Describe the edit (e.g. <i>nude on the beach</i>, <i>lingerie in a bedroom</i>, <i>bikini</i>)\n\n"
-               "✅ <b>NSFW Model</b> — no automatic filters\n"
-               "• Preserves your face and identity\n"
-               "• Every attempt is logged (admin is notified)"),
-        "es": ("🔥 <b>Edición Privada</b> (Flux Kontext Pro)\n\n"
-               f"💳 {PRIVATE_EDIT_COST} créditos por imagen\n\n"
-               "1️⃣ Envía una foto\n"
-               "2️⃣ Describe la edición (ej: <i>desnuda en la playa</i>, <i>lencería</i>, <i>bikini</i>)\n\n"
-               "✅ <b>Modelo NSFW</b> — sin filtros automáticos\n"
-               "• Preserva tu rostro e identidad\n"
-               "• Todo intento se registra (admin es notificado)"),
-        "fr": ("🔥 <b>Édition Privée</b> (Flux Kontext Pro)\n\n"
-               f"💳 {PRIVATE_EDIT_COST} crédits par image\n\n"
-               "1️⃣ Envoie une photo\n"
-               "2️⃣ Décris l'édition (ex: <i>nue sur la plage</i>, <i>lingerie</i>, <i>bikini</i>)\n\n"
-               "✅ <b>Modèle NSFW</b> — sans filtres automatiques\n"
-               "• Préserve ton visage et ton identité\n"
-               "• Chaque essai est enregistré (admin notifié)"),
-    }.get(lang, "🔥 Private Edit")
-    bot.send_message(message.chat.id, txt, parse_mode='HTML')
-
-
-def _private_run(chat_id, user_id, lang, photo_bytes, user_prompt):
-    """Executa a edicao privada com Flux Kontext Pro (NSFW) + notify admin."""
-    if get_user_credits(user_id) < PRIVATE_EDIT_COST:
-        bot.send_message(chat_id, TP(lang, "insufficient", need=PRIVATE_EDIT_COST, have=get_user_credits(user_id)))
-        return
-    if not use_credit(user_id, PRIVATE_EDIT_COST):
-        bot.send_message(chat_id, TP(lang, "insufficient", need=PRIVATE_EDIT_COST, have=get_user_credits(user_id)))
-        return
-    proc = bot.send_message(chat_id, TP(lang, "generating"), parse_mode='HTML')
-    try:
-        img_bytes = replicate_nsfw_edit(
-            user_prompt,
-            photo_bytes,
-        )
-        # admin notify SEMPRE em private edit
-        notify_admin_nsfw(user_id, user_prompt, model="private(kontext-pro)", severity="lite")
-        try:
-            bot.delete_message(chat_id, proc.message_id)
-        except Exception:
-            pass
-        creditos_left = get_user_credits(user_id)
-        cap = {
-            "pt": f"🔥 Edição privada pronta\n💳 Restam: <code>{creditos_left}</code>",
-            "en": f"🔥 Private edit ready\n💳 Left: <code>{creditos_left}</code>",
-            "es": f"🔥 Edición privada lista\n💳 Restan: <code>{creditos_left}</code>",
-            "fr": f"🔥 Édition privée prête\n💳 Restants: <code>{creditos_left}</code>",
-        }.get(lang)
-        bot.send_photo(chat_id, img_bytes, caption=cap, parse_mode='HTML')
-        update_user_stats(user_id, "total_creations")
-    except Exception as e:
-        add_credits(user_id, PRIVATE_EDIT_COST, "reembolso_private")
-        try:
-            bot.delete_message(chat_id, proc.message_id)
-        except Exception:
-            pass
-        logger.error(f"private edit err: {e}")
-        bot.send_message(chat_id, _humanize_openai_error(e, lang))
+    user_states.pop(user_id, None)
+    bot.send_message(message.chat.id, T(lang, "private_disabled"), parse_mode='HTML')
 
 
 @bot.message_handler(commands=['nsfw_log'])
@@ -6165,8 +6136,7 @@ def cmd_nsfw_log(message):
     """ADMIN: ver as ultimas 50 tentativas NSFW (lidas do logger nao persiste, so de erros)."""
     if message.from_user.id not in ADMIN_IDS:
         return
-    bot.reply_to(message, "🔞 As tentativas NSFW são-te enviadas em tempo real para esta DM.\n"
-                            "Procura por '🔞 Tentativa NSFW' no histórico para veres todas.")
+    bot.reply_to(message, "🔞 NSFW temporariamente desativado.")
 
 @bot.message_handler(commands=['backup'])
 def cmd_backup(message):
@@ -6609,7 +6579,11 @@ def cmd_wizard(message):
 
 @bot.message_handler(commands=['help', 'ajuda'])
 def cmd_help(message):
-    bot.send_message(message.chat.id, "❓ Use /start para o menu")
+    lang = get_user_lang(message.from_user.id)
+    markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+    markup.add(telebot.types.InlineKeyboardButton("💬 Suporte / Support", callback_data="action_support_chat"))
+    markup.add(telebot.types.InlineKeyboardButton(T(lang, "back"), callback_data="action_menu"))
+    bot.send_message(message.chat.id, get_help_text(lang), reply_markup=markup, parse_mode='HTML')
 
 @bot.message_handler(commands=['termos', 'terms', 'tos'])
 def cmd_termos(message):
@@ -7520,13 +7494,7 @@ def handle_admin_nsfw_kw(message):
     if user_id not in ADMIN_IDS:
         return
     admin_states.pop(user_id, None)
-    if message.text.strip().lower() in ("/cancel", "cancel", "cancelar"):
-        bot.reply_to(message, "❌ Cancelado.")
-        return
-    new_kws = [k.strip().lower() for k in message.text.split(",") if k.strip()]
-    set_system_config("nsfw_keywords", new_kws)
-    log_system_event("info", "cfg_change", f"NSFW keywords atualizadas ({len(new_kws)})", user_id)
-    bot.reply_to(message, f"✅ {len(new_kws)} NSFW keywords guardadas.")
+    bot.reply_to(message, "🔞 NSFW temporariamente desativado.")
 
 
 @bot.message_handler(func=lambda m: admin_states.get(m.from_user.id, "") == 'awaiting_ratelimit')
@@ -7639,25 +7607,6 @@ def handle_photo(message):
     # >>> Forcar escolha de modo se ainda nao foi feita (legacy users)
     if not has_chosen_mode(user_id):
         show_mode_picker(message.chat.id, user_id, lang)
-        return
-
-    # >>> PRIVATE EDIT: aguardar foto
-    if user_states.get(user_id) == "private_awaiting_photo":
-        try:
-            file_info = bot.get_file(message.photo[-1].file_id)
-            downloaded = bot.download_file(file_info.file_path)
-            private_edit_states.setdefault(user_id, {})["photo_bytes"] = downloaded
-            private_edit_states[user_id]["stage"] = "awaiting_prompt"
-            user_states[user_id] = "private_awaiting_prompt"
-            ack = {
-                "pt": "✅ Foto recebida. Agora <b>descreve a edição</b> que queres (em texto livre).",
-                "en": "✅ Photo received. Now <b>describe the edit</b> you want (free text).",
-                "es": "✅ Foto recibida. Ahora <b>describe la edición</b> que quieres.",
-                "fr": "✅ Photo reçue. Maintenant <b>décris l'édition</b> souhaitée.",
-            }.get(lang, "✅")
-            bot.reply_to(message, ack, parse_mode='HTML')
-        except Exception as e:
-            bot.reply_to(message, f"❌ {e}")
         return
 
     # >>> POSTERS PRO: se o user esta a aguardar foto para um template, processa aqui
@@ -10172,26 +10121,6 @@ def handle_all_messages(message):
         bot.reply_to(message, T(get_user_lang(user_id), "send_start_first"))
         return
 
-    # >>> PRIVATE EDIT: aguardar prompt em texto
-    if user_states.get(user_id) == "private_awaiting_prompt":
-        try:
-            user_states.pop(user_id, None)
-            txt = (message.text or "").strip()
-            st = private_edit_states.get(user_id) or {}
-            photo = st.get("photo_bytes")
-            if not photo:
-                bot.reply_to(message, "❌ Foto perdida. Usa /private de novo.")
-                return
-            if not txt:
-                bot.reply_to(message, "✏️ Descreve a edição.")
-                user_states[user_id] = "private_awaiting_prompt"
-                return
-            Thread(target=_private_run,
-                    args=(message.chat.id, user_id, get_user_lang(user_id), photo, txt)).start()
-        except Exception as e:
-            logger.error(f"private prompt err: {e}")
-        return
-
     # >>> POSTERS PRO: aguardar resposta do questionario
     if user_states.get(user_id) == "poster_awaiting_answer":
         try:
@@ -11176,14 +11105,13 @@ _NSFW_RE = _re_nsfw.compile(
 )
 
 def is_nsfw_attempt(prompt):
-    if not prompt:
-        return False
-    return bool(_NSFW_RE.search(prompt))
+    return False
 
 
 def notify_admin_nsfw(user_id, prompt, model="?", severity="medium"):
     """Notifica TODOS os admins que o user X tentou gerar NSFW.
     Nao bloqueia — apenas regista para controlo."""
+    return
     try:
         txt = (
             f"🔞 <b>Tentativa NSFW</b> · <i>{severity}</i>\n\n"
@@ -11462,19 +11390,10 @@ def openai_generate_poster(prompt, photo_bytes=None, size=None, _attempt=1, user
             time.sleep(2)
             return openai_generate_poster(prompt, photo_bytes=photo_bytes, size=size, _attempt=_attempt+1,
                                            user_id=user_id, lang=lang, allow_nsfw_lite=allow_nsfw_lite)
-        # FALLBACK automatico para Kontext Max quando content_policy/safety
+        # NSFW/Kontext Max fallback temporariamente desativado por decisao de produto.
         if any(k in msg for k in ("content_policy", "safety", "moderation", "not allowed", "rejected")):
-            logger.info(f"gpt-image-1 bloqueou por policy — fallback para Kontext Max (user={user_id})")
-            if user_id:
-                notify_admin_nsfw(user_id, prompt, model="gpt-image-1->kontext-max", severity="fallback")
-            if photo_bytes:
-                try:
-                    return replicate_nsfw_edit(prompt, photo_bytes)
-                except Exception as e2:
-                    logger.error(f"Kontext Max fallback tambem falhou: {e2}")
-                    raise
-            else:
-                raise
+            logger.info(f"gpt-image-1 bloqueou por policy (user={user_id}); fallback NSFW desativado")
+            raise
         raise
 
 
